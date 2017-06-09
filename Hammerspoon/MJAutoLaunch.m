@@ -17,8 +17,11 @@ BOOL MJAutoLaunchGet(void) {
     for (id item in sharedFileListArray) {
         LSSharedFileListItemRef sharedFileItem = (__bridge LSSharedFileListItemRef)item;
         CFURLRef url = NULL;
-        
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
         OSStatus result = LSSharedFileListItemResolve(sharedFileItem, 0, &url, NULL);
+#pragma clang diagnostic pop
         if (result == noErr && url != NULL) {
             BOOL foundIt = [appURL isEqual: [(__bridge NSURL*)url fileReferenceURL]];
             
@@ -57,8 +60,11 @@ void MJAutoLaunchSet(BOOL opensAtLogin) {
         for (id item in sharedFileListArray) {
             LSSharedFileListItemRef sharedFileItem = (__bridge LSSharedFileListItemRef)item;
             CFURLRef url = NULL;
-            
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
             OSStatus result = LSSharedFileListItemResolve(sharedFileItem, 0, &url, NULL);
+#pragma clang diagnostic pop
             if (result == noErr && url != nil) {
                 if ([appURL isEqual: [(__bridge NSURL*)url fileReferenceURL]])
                     LSSharedFileListItemRemove(shared_file_list(), sharedFileItem);

@@ -14,12 +14,12 @@ NSMutableArray *drawingWindows;
 
 // Objective-C class interface implementations
 @implementation HSDrawingWindow
-- (id)initWithContentRect:(NSRect)contentRect styleMask:(NSUInteger __unused)windowStyle backing:(NSBackingStoreType __unused)bufferingType defer:(BOOL __unused)deferCreation {
+- (id)initWithContentRect:(NSRect)contentRect styleMask:(NSWindowStyleMask __unused)windowStyle backing:(NSBackingStoreType __unused)bufferingType defer:(BOOL __unused)deferCreation {
     //NSLog(@"HSDrawingWindow::initWithContentRect contentRect:(%.1f,%.1f) %.1fx%.1f", contentRect.origin.x, contentRect.origin.y, contentRect.size.width, contentRect.size.height);
 
-    if (!isfinite(contentRect.origin.x) || !isfinite(contentRect.origin.y) || !isfinite(contentRect.size.height) || !isfinite(contentRect.size.width)) {
+    if (!isfinite(contentRect.origin.x) || !isfinite(contentRect.origin.y) || !isfinite(contentRect.size.height) || !isfinite(contentRect.size.width) || !CGRectContainsRect(CGRectMake((CGFloat)INT_MIN, (CGFloat)INT_MIN, (CGFloat)INT_MAX - (CGFloat)INT_MIN, (CGFloat)INT_MAX - (CGFloat)INT_MIN), contentRect)) {
         LuaSkin *skin = [LuaSkin shared];
-        [skin logError:@"hs.drawing object created with non-finite co-ordinates/size"];
+        [skin logError:@"hs.drawing object created with invalid sizeRect"];
         return nil;
     }
 
@@ -1189,6 +1189,12 @@ static int drawing_setSize(lua_State *L) {
 
     NSRect oldFrame = drawingWindow.frame;
     NSRect newFrame = NSMakeRect(oldFrame.origin.x, oldFrame.origin.y + oldFrame.size.height - windowSize.height, windowSize.width, windowSize.height);
+
+    if (!CGRectContainsRect(CGRectMake((CGFloat)INT_MIN, (CGFloat)INT_MIN, (CGFloat)INT_MAX - (CGFloat)INT_MIN, (CGFloat)INT_MAX - (CGFloat)INT_MIN), newFrame)) {
+        [skin logError:@"hs.drawing:setSize() called with invalid size"];
+        lua_pushvalue(L, 1);
+        return 1;
+    }
 
     [drawingWindow setFrame:newFrame display:YES animate:NO];
 
@@ -2425,7 +2431,7 @@ static int default_textAttributes(lua_State *L) {
 }
 
 /// hs.drawing.getTextDrawingSize(styledTextObject or theText, [textStyle]) -> sizeTable | nil
-/// Method
+/// Function
 /// Get the size of the rectangle necessary to fully render the text with the specified style so that is will be completely visible.
 ///
 /// Parameters:

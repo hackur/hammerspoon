@@ -1,3 +1,5 @@
+hs.timer = require("hs.timer")
+
 -- Storage for a timer object in various tests
 testTimer = nil
 -- Storage for a timer callback to modify in various tests

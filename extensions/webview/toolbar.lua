@@ -31,7 +31,9 @@
 --- t.attachToolbar(a)
 --- ~~~
 ---
---- Note: This module is supported in OS X versions prior to 10.10 (for the Hammerspoon console only), even though its parent `hs.webview` is not. To load this module directly, use `require("hs.webview.toolbar")` instead of relying on module auto-loading.
+--- Notes:
+---  * This module is supported in OS X versions prior to 10.10 (for the Hammerspoon console only), even though its parent `hs.webview` is not. To load this module directly, use `require("hs.webview.toolbar")` instead of relying on module auto-loading.
+---  * Toolbar items are rendered in the order they are supplied, although if the toolbar is marked as customizable, the user may have changed the order.
 
 local USERDATA_TAG = "hs.webview.toolbar"
 local module       = require(USERDATA_TAG.."_internal")
@@ -42,91 +44,17 @@ require("hs.image")
 
 -- private variables and methods -----------------------------------------
 
-local _kMetaTable = {}
-_kMetaTable._k = setmetatable({}, {__mode = "k"})
-_kMetaTable._t = setmetatable({}, {__mode = "k"})
-_kMetaTable.__index = function(obj, key)
-        if _kMetaTable._k[obj] then
-            if _kMetaTable._k[obj][key] then
-                return _kMetaTable._k[obj][key]
-            else
-                for k,v in pairs(_kMetaTable._k[obj]) do
-                    if v == key then return k end
-                end
-            end
-        end
-        return nil
-    end
-_kMetaTable.__newindex = function(obj, key, value)
-        error("attempt to modify a table of constants",2)
-        return nil
-    end
-_kMetaTable.__pairs = function(obj) return pairs(_kMetaTable._k[obj]) end
-_kMetaTable.__len = function(obj) return #_kMetaTable._k[obj] end
-_kMetaTable.__tostring = function(obj)
-        local result = ""
-        if _kMetaTable._k[obj] then
-            local width = 0
-            for k,v in pairs(_kMetaTable._k[obj]) do width = width < #tostring(k) and #tostring(k) or width end
-            for k,v in require("hs.fnutils").sortByKeys(_kMetaTable._k[obj]) do
-                if _kMetaTable._t[obj] == "table" then
-                    result = result..string.format("%-"..tostring(width).."s %s\n", tostring(k),
-                        ((type(v) == "table") and "{ table }" or tostring(v)))
-                else
-                    result = result..((type(v) == "table") and "{ table }" or tostring(v)).."\n"
-                end
-            end
-        else
-            result = "constants table missing"
-        end
-        return result
-    end
-_kMetaTable.__metatable = _kMetaTable -- go ahead and look, but don't unset this
-
-local _makeConstantsTable
-_makeConstantsTable = function(theTable)
-    if type(theTable) ~= "table" then
-        local dbg = debug.getinfo(2)
-        local msg = dbg.short_src..":"..dbg.currentline..": attempting to make a '"..type(theTable).."' into a constant table"
-        if module.log then module.log.ef(msg) else print(msg) end
-        return theTable
-    end
-    for k,v in pairs(theTable) do
-        if type(v) == "table" then
-            local count = 0
-            for a,b in pairs(v) do count = count + 1 end
-            local results = _makeConstantsTable(v)
-            if #v > 0 and #v == count then
-                _kMetaTable._t[results] = "array"
-            else
-                _kMetaTable._t[results] = "table"
-            end
-            theTable[k] = results
-        end
-    end
-    local results = setmetatable({}, _kMetaTable)
-    _kMetaTable._k[results] = theTable
-    local count = 0
-    for a,b in pairs(theTable) do count = count + 1 end
-    if #theTable > 0 and #theTable == count then
-        _kMetaTable._t[results] = "array"
-    else
-        _kMetaTable._t[results] = "table"
-    end
-    return results
-end
-
 -- Public interface ------------------------------------------------------
 
-module.systemToolbarItems = _makeConstantsTable(module.systemToolbarItems)
-module.itemPriorities     = _makeConstantsTable(module.itemPriorities)
+module.systemToolbarItems = ls.makeConstantsTable(module.systemToolbarItems)
+module.itemPriorities     = ls.makeConstantsTable(module.itemPriorities)
 
 
 --- hs.webview.toolbar:addItems(toolbarTable) -> toolbarObject
 --- Method
 --- Add one or more toolbar items to the toolbar
 ---
---- Paramters:
+--- Parameters:
 ---  * `toolbarTable` - a table describing a single toolbar item, or an array of tables, each describing a separate toolbar item, to be added to the toolbar.
 ---
 --- Returns:
@@ -144,13 +72,14 @@ module.itemPriorities     = _makeConstantsTable(module.itemPriorities)
 ---   * `label`        - a string label, or false to remove, for the toolbar item or group when text is displayed in the toolbar or in the customization panel. For a toolbar item, the default is the `id` string; for a group, the default is `false`. If a group has a label assigned to it, the group label will be displayed for the group of items it contains. If a group does not have a label, the individual items which make up the group will each display their individual labels.
 ---   * `priority`     - an integer value used to determine toolbar item order and which items are displayed or put into the overflow menu when the number of items in the toolbar exceed the width of the window in which the toolbar is attached. Some example values are provided in the [hs.webview.toolbar.itemPriorities](#itemPriorities) table. If a toolbar item is in a group, it's priority is ignored and the item group is ordered by the item group's priority.
 ---   * `searchfield`  - a boolean (default false) specifying whether or not this toolbar item is a search field. If true, the following additional keys are allowed:
----     * `searchHistory`             - an array (table) of strings, specifying previous searches to automatically include in the search field menu, if `searchPredefinedMenuTitle` is not false
----     * `searchHistoryAutosaveName` - a string specifying the key name to save search history with in the application deafults (accessible through `hs.settings`). If this value is set, search history will be maintained through restarts of Hammerspoon.
----     * `searchHistoryLimit`        - the maximum number of items to store in the search field history.
----     * `searchPredefinedMenuTitle` - a string or boolean specifying how a predefined list of search field "response" should be included in the search field menu. If this item is `true`, this list of items specified for `searchPredefinedSearches` will be displayed in a submenu with the title "Predefined Searches". If this item is a string, the list of items will be displayed in a submenu with the title specified by this string value. If this item is `false`, then the search field menu will only contain the items specified in `searchPredefinedSearches` and no search history will be included in the menu.
----     * `searchPredefinedSearches`  - an array (table) of strings specifying the items to be listed in the predefined search submenu. If set to false, any existing menu will be removed and the search field menu will be reset to the default.
----     * `searchText`                - a string specifying the text to display in the search field.
----     * `searchWidth`               - the width of the search field text entry box.
+---     * `searchHistory`                - an array (table) of strings, specifying previous searches to automatically include in the search field menu, if `searchPredefinedMenuTitle` is not false
+---     * `searchHistoryAutosaveName`    - a string specifying the key name to save search history with in the application deafults (accessible through `hs.settings`). If this value is set, search history will be maintained through restarts of Hammerspoon.
+---     * `searchHistoryLimit`           - the maximum number of items to store in the search field history.
+---     * `searchPredefinedMenuTitle`    - a string or boolean specifying how a predefined list of search field "response" should be included in the search field menu. If this item is `true`, this list of items specified for `searchPredefinedSearches` will be displayed in a submenu with the title "Predefined Searches". If this item is a string, the list of items will be displayed in a submenu with the title specified by this string value. If this item is `false`, then the search field menu will only contain the items specified in `searchPredefinedSearches` and no search history will be included in the menu.
+---     * `searchPredefinedSearches`     - an array (table) of strings specifying the items to be listed in the predefined search submenu. If set to false, any existing menu will be removed and the search field menu will be reset to the default.
+---     * `searchReleaseFocusOnCallback` - a boolean, default false, specifying whether or not focus leaves the search field text box when the callback is invoked. Setting this to true can be useful if you want subsequent keypresses to be caught by the webview after reacting to the value entered into the search field by the user.
+---     * `searchText`                   - a string specifying the text to display in the search field.
+---     * `searchWidth`                  - the width of the search field text entry box.
 ---   * `selectable`   - a boolean value, default false, indicating whether or not this toolbar item is selectable (i.e. highlights, like a selected tab) when clicked on. Only one selectable toolbar item can be highlighted at a time, and you can get or set/reset the selected item with [hs.webview.toolbar:selectedItem](#selectedItem).
 ---   * `tag`          - an integer value which can be used for own purposes; has no affect on the visual aspect of the item or its behavior.
 ---   * `tooltip`      - a string label, or false to remove, which is displayed as a tool tip when the user hovers the mouse over the button or button group. If a button is in a group, it's tooltip is ignored in favor of the group tooltip.

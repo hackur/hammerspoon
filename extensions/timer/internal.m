@@ -15,17 +15,24 @@ static int refTable;
 @property NSTimer *t;
 @property int fnRef;
 @property BOOL continueOnError;
+@property BOOL repeats;
+@property NSTimeInterval interval;
 
+- (void)create:(NSTimeInterval)interval repeat:(BOOL)repeat;
 - (void)callback:(NSTimer *)timer;
 - (BOOL)isRunning;
 - (void)start;
 - (void)stop;
-- (int)nextTrigger;
+- (double)nextTrigger;
 - (void)setNextTrigger:(NSTimeInterval)interval;
 - (void)trigger;
 @end
 
 @implementation HSTimer
+- (void)create:(NSTimeInterval)interval repeat:(BOOL)repeat {
+    self.t = [NSTimer timerWithTimeInterval:interval target:self selector:@selector(callback:) userInfo:nil repeats:repeat];
+}
+
 - (void)callback:(NSTimer *)timer {
     LuaSkin *skin = [LuaSkin shared];
     
@@ -47,7 +54,7 @@ static int refTable;
         if (!self.continueOnError) {
             // some details about the timer to help identify which one it is:
             [skin logBreadcrumb:@"hs.timer callback failed. The timer has been stopped to prevent repeated notifications of the error."];
-            [skin logBreadcrumb:[NSString stringWithFormat:@"  timer details: %s repeating, every %f seconds, next scheduled at %@", CFRunLoopTimerDoesRepeat((__bridge CFRunLoopTimerRef)self.t) ? "is" : "is not", self.t.timeInterval, self.t.fireDate]];
+            [skin logBreadcrumb:[NSString stringWithFormat:@"  timer details: %s repeating, every %f seconds, next scheduled at %@", CFRunLoopTimerDoesRepeat((__bridge CFRunLoopTimerRef)timer) ? "is" : "is not", self.interval, timer.fireDate]];
             [self.t invalidate];
         }
     }
@@ -58,9 +65,13 @@ static int refTable;
 }
 
 - (void)start {
-    if (self.t.isValid) {
-        [[NSRunLoop currentRunLoop] addTimer:self.t forMode:NSDefaultRunLoopMode];
+    if (!self.t.isValid) {
+        // We've previously been stopped, which means the NSTimer is invalid, so recreate it
+        [self create:self.interval repeat:self.repeats];
     }
+
+    [self setNextTrigger:self.interval];
+    [[NSRunLoop currentRunLoop] addTimer:self.t forMode:NSDefaultRunLoopMode];
 }
 
 - (void)stop {
@@ -69,7 +80,7 @@ static int refTable;
     }
 }
 
-- (int)nextTrigger {
+- (double)nextTrigger {
     CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
     CFAbsoluteTime next = CFRunLoopTimerGetNextFireDate((__bridge CFRunLoopTimerRef)self.t);
 
@@ -93,7 +104,9 @@ HSTimer *createHSTimer(NSTimeInterval interval, int callbackRef, BOOL continueOn
     HSTimer *timer = [[HSTimer alloc] init];
     timer.fnRef = callbackRef;
     timer.continueOnError = continueOnError;
-    timer.t = [NSTimer timerWithTimeInterval:interval target:timer selector:@selector(callback:) userInfo:nil repeats:repeat];
+    timer.repeats = repeat;
+    timer.interval = interval;
+    [timer create:interval repeat:repeat];
 
     return timer;
 }
@@ -112,6 +125,7 @@ HSTimer *createHSTimer(NSTimeInterval interval, int callbackRef, BOOL continueOn
 ///
 /// Notes:
 ///  * The returned object does not start its timer until its `:start()` method is called
+///  * If `interval` is 0, the timer will not repeat (because if it did, it would be repeating as fast as your machine can manage, which seems generally unwise)
 static int timer_new(lua_State* L) {
     LuaSkin *skin = [LuaSkin shared];
     [skin checkArgs:LS_TNUMBER, LS_TFUNCTION, LS_TBOOLEAN | LS_TNIL | LS_TOPTIONAL, LS_TBREAK];
@@ -127,8 +141,12 @@ static int timer_new(lua_State* L) {
     else
         continueOnError = NO ;
 
+    BOOL shouldRepeat = YES;
+    if (sec == 0.0)
+        shouldRepeat = NO;
+
     // Create the timer object
-    HSTimer *timer = createHSTimer(sec, callbackRef, continueOnError, YES);
+    HSTimer *timer = createHSTimer(sec, callbackRef, continueOnError, shouldRepeat);
 
     // Wire up the timer object to Lua
     void **userData = lua_newuserdata(L, sizeof(HSTimer*));
@@ -276,12 +294,20 @@ static int timer_nextTrigger(lua_State *L) {
 ///
 /// Returns:
 ///  * The `hs.timer` object, or nil if an error occurred
+///
+/// Notes:
+///  * If the timer is not already running, this will start it
 static int timer_setNextTrigger(lua_State *L) {
     LuaSkin *skin = [LuaSkin shared];
     [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TNUMBER, LS_TBREAK];
     HSTimer *timer = get_objectFromUserdata(__bridge HSTimer, L, 1, USERDATA_TAG);
 
     NSTimeInterval seconds = (NSTimeInterval)lua_tonumber(L, 2);
+
+    if (![timer isRunning]) {
+        [timer start];
+    }
+
     [timer setNextTrigger:seconds];
 
     lua_pushvalue(L, 1);

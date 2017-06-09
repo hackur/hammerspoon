@@ -9,6 +9,8 @@
 #import "MJPreferencesWindowController.h"
 #import "MJConsoleWindowController.h"
 #import "MJAutoLaunch.h"
+#import "MJDockIcon.h"
+#import "HSAppleScript.h"
 #import <Crashlytics/Crashlytics.h>
 
 static LuaSkin* MJLuaState;
@@ -62,6 +64,25 @@ void MJLuaSetupLogHandler(void(^blk)(NSString* str)) {
 }
 
 @end
+
+/// hs.uploadCrashData([state]) -> bool
+/// Function
+/// Get or set the "Upload Crash Data" preference for Hammerspoon
+///
+/// Parameters:
+///  * state - An optional boolean, true to upload crash reports, false to not
+///
+/// Returns:
+///  * True if Hammerspoon is currently (or has just been) set to upload crash data or False otherwise
+///
+/// Notes:
+///  * If at all possible, please do allow Hammerspoon to upload crash reports to us, it helps a great deal in keeping Hammerspoon stable
+///  * Our Privacy Policy can be found here: [http://www.hammerspoon.org/privacy.html](https://github.com/Hammerspoon/hammerspoon/pull/1286/files)
+static int core_uploadCrashData(lua_State* L) {
+    if (lua_isboolean(L, -1)) { HSSetUploadCrashData(lua_toboolean(L, -1)); }
+    lua_pushboolean(L, HSUploadCrashData()) ;
+    return 1;
+}
 
 /// hs.autoLaunch([state]) -> bool
 /// Function
@@ -146,6 +167,25 @@ static int core_openconsole(lua_State* L) {
     return 0;
 }
 
+/// hs.open(filePath)
+/// Function
+/// Opens a file as if it were opened with /usr/bin/open
+///
+/// Parameters:
+///  * filePath - A string containing the path to a file/bundle to open
+///
+/// Returns:
+///  * A boolean, true if the file was opened successfully, otherwise false
+static int core_open(lua_State *L) {
+    LuaSkin *skin = [LuaSkin shared];
+    [skin checkArgs:LS_TSTRING, LS_TBREAK];
+
+    BOOL result = [[NSWorkspace sharedWorkspace] openFile:[skin toNSObjectAtIndex:1]];
+
+    lua_pushboolean(L, result);
+    return 1;
+}
+
 /// hs.reload()
 /// Function
 /// Reloads your init-file in a fresh Lua environment.
@@ -174,7 +214,10 @@ static int push_hammerAppInfo(lua_State* L) {
 // Take this out of hs.settings?
         lua_pushstring(L, [[[NSBundle mainBundle] bundleIdentifier] UTF8String]) ;
         lua_setfield(L, -2, "bundleID") ;
-
+#ifdef DEBUG
+        lua_pushstring(L, __DATE__ ", " __TIME__) ; lua_setfield(L, -2, "buildTime") ;
+        lua_pushboolean(L, YES) ; lua_setfield(L, -2, "debugBuild") ;
+#endif
     return 1;
 }
 
@@ -251,12 +294,12 @@ static int automaticallyChecksForUpdates(lua_State *L) {
     return 1 ;
 }
 
-/// hs.checkForUpdates() -> none
+/// hs.checkForUpdates([silent]) -> none
 /// Function
 /// Check for an update now, and if one is available, prompt the user to continue the update process.
 ///
 /// Parameters:
-///  * None
+///  * silent - An optional boolean. If true, no UI will be displayed if an update is available. Defaults to false.
 ///
 /// Returns:
 ///  * None
@@ -265,14 +308,21 @@ static int automaticallyChecksForUpdates(lua_State *L) {
 ///  * If you are running a non-release or locally compiled version of Hammerspoon then the results of this function are unspecified.
 static int checkForUpdates(lua_State *L) {
     LuaSkin *skin = [LuaSkin shared];
+    [skin checkArgs:LS_TBOOLEAN|LS_TOPTIONAL, LS_TBREAK];
+
     if (NSClassFromString(@"SUUpdater")) {
         NSString *frameworkPath = [[[NSBundle mainBundle] privateFrameworksPath] stringByAppendingPathComponent:@"Sparkle.framework"];
         if ([[NSBundle bundleWithPath:frameworkPath] load]) {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wundeclared-selector"
-            id sharedUpdater = [NSClassFromString(@"SUUpdater")  performSelector:@selector(sharedUpdater)] ;
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+            id sharedUpdater = [NSClassFromString(@"SUUpdater") performSelector:@selector(sharedUpdater)] ;
 
-            [sharedUpdater performSelector:@selector(checkForUpdates:) withObject:nil] ;
+            SEL checkMethod = @selector(checkForUpdates:);
+            if (lua_type(L, 1) == LUA_TBOOLEAN && lua_toboolean(L, 1) == YES) {
+                checkMethod = @selector(checkForUpdateInformation);
+            }
+            [sharedUpdater performSelector:checkMethod withObject:nil] ;
 #pragma clang diagnostic pop
         } else {
             [skin logWarn:@"Sparkle Update framework not available for the running instance of Hammerspoon."] ;
@@ -281,6 +331,38 @@ static int checkForUpdates(lua_State *L) {
         [skin logWarn:@"Sparkle Update framework not available for the running instance of Hammerspoon."] ;
     }
     return 0 ;
+}
+
+/// hs.updateAvailable() -> string or false
+/// Function
+/// Gets the version number of an available update
+///
+/// Parameters:
+///  * None
+///
+/// Returns:
+///  * A string containing the version number of the latest release, or a boolean false if no update is available
+///
+/// Notes:
+///  * This is not a live check, it is a cached result of whatever the previous update check found. By default Hammerspoon checks for updates every few hours, but you can also add your own timer to check for updates more frequently with `hs.checkForUpdates()`
+static int updateAvailable(lua_State *L) {
+    LuaSkin *skin = [LuaSkin shared];
+    [skin checkArgs:LS_TBREAK];
+
+    id appDelegate = [[NSApplication sharedApplication] delegate];
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wundeclared-selector"
+
+    NSString *updateAvailable = [appDelegate performSelector:@selector(updateAvailable)];
+    if (updateAvailable == nil) {
+        lua_pushboolean(L, 0);
+    } else {
+        [skin pushNSObject:updateAvailable];
+    }
+
+#pragma clang diagnostic pop
+    return 1;
 }
 
 /// hs.canCheckForUpdates() -> boolean
@@ -308,6 +390,68 @@ static int canCheckForUpdates(lua_State *L) {
     }
     lua_pushboolean(L, canUpdate) ;
     return 1 ;
+}
+
+/// hs.allowAppleScript([state]) -> bool
+/// Function
+/// Set or display whether or not external Hammerspoon AppleScript commands are allowed
+///
+/// Parameters:
+///  * state - an optional boolean which will set whether or not external Hammerspoon's AppleScript commands are allowed
+///
+/// Returns:
+///  * A boolean, true if Hammerspoon's AppleScript commands are (or has just been) allowed otherwise false
+///
+/// Notes:
+///  * AppleScript access is disallowed by default
+///  * Due to the way AppleScript support works, Hammerspoon will always allow AppleScript commands that are part of the "Standard Suite", such as `name, `quit`, `version`, etc. However, Hammerspoon will only allow commands from the "Hammerspoon Suite" if `hs.allowAppleScript()` is set to `true`
+///  * For a full list of AppleScript Commands:
+///      - Open `/Applications/Utilities/Script Editor.app`
+///      - Click `File > Open Dictionary...`
+///      - Select Hammerspoon from the list of Applications
+///      - This will now open a Dictionary containing all of the availible Hammerspoon AppleScript commands.
+///  * Note that strings within the Lua code you pass from AppleScript can be delimited by `[[` and `]]` rather than normal quotes
+///
+/// Example:
+///
+///  ```lua
+///  tell application "Hammerspoon"
+///    execute lua code "hs.alert([[Hello from AppleScript]])"
+///  end tell```
+static int core_appleScript(lua_State* L) {
+    LuaSkin *skin = [LuaSkin shared];
+    [skin checkArgs:LS_TBOOLEAN|LS_TOPTIONAL, LS_TBREAK];
+
+    if (lua_isboolean(L, -1)) {
+        HSAppleScriptSetEnabled(lua_toboolean(L, -1));
+    }
+
+    lua_pushboolean(L, HSAppleScriptEnabled()) ;
+    return 1;
+}
+
+/// hs.openConsoleOnDockClick([state]) -> bool
+/// Function
+/// Set or display whether or not the Console window will open when the Hammerspoon dock icon is clicked
+///
+/// Parameters:
+///  * state - An optional boolean, true if the console window should open, false if not
+///
+/// Returns:
+///  * A boolean, true if the console window will open when the dock icon
+///
+/// Notes:
+///  * This only refers to dock icon clicks while Hammerspoon is already running. The console window is not opened by launching the app
+static int core_openConsoleOnDockClick(lua_State* L) {
+    LuaSkin *skin = [LuaSkin shared];
+    [skin checkArgs:LS_TBOOLEAN|LS_TOPTIONAL, LS_TBREAK];
+
+    if (lua_isboolean(L, -1)) {
+        HSOpenConsoleOnDockClickSetEnabled(lua_toboolean(L, -1));
+    }
+
+    lua_pushboolean(L, HSOpenConsoleOnDockClickEnabled()) ;
+    return 1;
 }
 
 /// hs.focus()
@@ -384,19 +528,24 @@ static int core_notify(lua_State* L) {
 }
 
 static luaL_Reg corelib[] = {
+    {"openConsoleOnDockClick", core_openConsoleOnDockClick},
     {"openConsole", core_openconsole},
     {"consoleOnTop", core_consoleontop},
     {"openAbout", core_openabout},
     {"menuIcon", core_menuicon},
     {"openPreferences", core_openpreferences},
+    {"open", core_open},
     {"autoLaunch", core_autolaunch},
     {"automaticallyCheckForUpdates", automaticallyChecksForUpdates},
     {"checkForUpdates", checkForUpdates},
+    {"updateAvailable", updateAvailable},
     {"canCheckForUpdates", canCheckForUpdates},
+    {"allowAppleScript", core_appleScript},
     {"reload", core_reload},
     {"focus", core_focus},
     {"accessibilityState", core_accessibilityState},
     {"getObjectMetatable", core_getObjectMetatable},
+    {"uploadCrashData", core_uploadCrashData},
     {"cleanUTF8forConsole", core_cleanUTF8},
     {"_exit", core_exit},
     {"_logmessage", core_logmessage},
@@ -422,6 +571,8 @@ void MJLuaDestroy(void) {
 void MJLuaReplace(void) {
     MJLuaDeinit();
     MJLuaDealloc();
+    [[MJConsoleWindowController singleton] initializeConsoleColorsAndFont] ;
+
     MJLuaAlloc();
     MJLuaInit();
 }
@@ -493,6 +644,64 @@ void MJLuaInit(void) {
     }
 }
 
+// Accessibility State Callback:
+void callAccessibilityStateCallback(void) {
+    LuaSkin *skin = MJLuaState;
+    lua_State *L = MJLuaState.L;
+
+    lua_getglobal(L, "hs");
+    lua_getfield(L, -1, "accessibilityStateCallback");
+
+    if (lua_type(L, -1) == LUA_TFUNCTION) {
+        [skin protectedCallAndTraceback:0 nresults:0];
+    }
+}
+
+// Text Dropped to Dock Icon Callback:
+void textDroppedToDockIcon(NSString *pboardString) {
+    LuaSkin *skin = MJLuaState;
+    lua_State *L = skin.L;
+
+    lua_getglobal(L, "hs");
+    lua_getfield(L, -1, "textDroppedToDockIconCallback");
+
+    if (lua_type(L, -1) == LUA_TFUNCTION) {
+        [skin pushNSObject:pboardString];
+        [skin protectedCallAndTraceback:1 nresults:0];
+    } else {
+        [skin logError:@"Text was dropped on our dock icon, but no callback handler is set in hs.textDroppedToDockIconCallback"];
+    }
+}
+
+// File Dropped to Dock Icon Callback:
+void fileDroppedToDockIcon(NSString *filePath) {
+    LuaSkin *skin = MJLuaState;
+    lua_State *L = skin.L;
+
+    lua_getglobal(L, "hs");
+    lua_getfield(L, -1, "fileDroppedToDockIconCallback");
+
+    if (lua_type(L, -1) == LUA_TFUNCTION) {
+        [skin pushNSObject:filePath];
+        [skin protectedCallAndTraceback:1 nresults:0];
+    } else {
+        [skin logError:@"File was dropped on our dock icon, but no callback handler is set in hs.fileDroppedToDockIconCallback"];
+    }
+}
+
+// Accessibility State Callback:
+void callDockIconCallback(void) {
+    LuaSkin *skin = MJLuaState;
+    lua_State *L = MJLuaState.L;
+
+    lua_getglobal(L, "hs");
+    lua_getfield(L, -1, "dockIconClickCallback");
+
+    if (lua_type(L, -1) == LUA_TFUNCTION) {
+        [skin protectedCallAndTraceback:0 nresults:0];
+    }
+}
+
 static int callShutdownCallback(lua_State *L) {
     lua_getglobal(L, "hs");
     lua_getfield(L, -1, "shutdownCallback");
@@ -509,6 +718,7 @@ void MJLuaDeinit(void) {
     LuaSkin *skin = MJLuaState;
 
     callShutdownCallback(skin.L);
+
     if (MJLuaLogDelegate) {
         [MJLuaState setDelegate:nil] ;
         MJLuaLogDelegate = nil ;

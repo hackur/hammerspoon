@@ -13,11 +13,13 @@
 @protocol HSChooserTableViewDelegate <NSObject>
 
 - (void)tableView:(NSTableView *)tableView didClickedRow:(NSInteger)row;
+- (void)didRightClickAtRow:(NSInteger)row;
 
 @end
 
 @interface HSChooserTableView : NSTableView
 
 @property (nonatomic, weak) id<HSChooserTableViewDelegate> extendedDelegate;
+@property (nonatomic, strong) NSTrackingArea *trackingArea;
 
 @end

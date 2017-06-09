@@ -7,6 +7,7 @@
 //
 
 #import "HSChooser.h"
+#import "chooser.h"
 
 #pragma mark - Chooser object implementation
 
@@ -31,13 +32,16 @@
         // We're setting these directly, because we've overridden the setters and we don't need to invoke those now
         _fgColor = nil;
         _subTextColor = nil;
+        _isObservingThemeChanges = NO;
 
         self.currentStaticChoices = nil;
         self.currentCallbackChoices = nil;
         self.filteredChoices = nil;
 
+        self.showCallbackRef = LUA_NOREF;
         self.choicesCallbackRef = LUA_NOREF;
         self.queryChangedCallbackRef = LUA_NOREF;
+        self.rightClickCallbackRef = LUA_NOREF;
         self.completionCallbackRef = completionCallbackRef;
 
         self.hasChosen = NO;
@@ -55,6 +59,9 @@
         if (![self setupWindow]) {
             return nil;
         }
+
+        // Start observing interface theme changes.
+        self.isObservingThemeChanges = YES;
     }
 
     return self;
@@ -66,8 +73,8 @@
     [super windowDidLoad];
 
     [self.queryField setFocusRingType:NSFocusRingTypeNone];
+    [self setAutoBgLightDark];
 }
-
 
 - (void)windowDidBecomeKey:(NSNotification *)notification {
     __weak id _self = self;
@@ -94,6 +101,12 @@
 
     [self addShortcut:@"Up" keyCode:NSUpArrowFunctionKey mods:NSFunctionKeyMask|NSNumericPadKeyMask handler:^{ [_self selectPreviousChoice]; }];
     [self addShortcut:@"Down" keyCode:NSDownArrowFunctionKey mods:NSFunctionKeyMask|NSNumericPadKeyMask handler:^{ [_self selectNextChoice]; }];
+    [self addShortcut:@"p" keyCode:-1 mods:NSControlKeyMask handler:^{ [_self selectPreviousChoice]; }];
+    [self addShortcut:@"n" keyCode:-1 mods:NSControlKeyMask handler:^{ [_self selectNextChoice]; }];
+
+    [self addShortcut:@"PageUp" keyCode:NSPageUpFunctionKey mods:NSFunctionKeyMask handler:^{ [_self selectPreviousPage]; }];
+    [self addShortcut:@"PageDown" keyCode:NSPageDownFunctionKey mods:NSFunctionKeyMask handler:^{ [_self selectNextPage]; }];
+    [self addShortcut:@"v" keyCode:-1 mods:NSControlKeyMask handler:^{ [_self selectNextPage]; }];
 }
 
 - (void)windowDidResignKey:(NSNotification *)notification {
@@ -191,10 +204,24 @@
     }
 
     [self controlTextDidChange:[NSNotification notificationWithName:@"Unused" object:nil]];
+
+    LuaSkin *skin = [LuaSkin shared];
+
+    if (self.showCallbackRef != LUA_NOREF && self.showCallbackRef != LUA_REFNIL) {
+        [skin pushLuaRef:*(self.refTable) ref:self.showCallbackRef];
+        if (![skin protectedCallAndTraceback:0 nresults:0]) {
+            [skin logError:[NSString stringWithFormat:@"%s:showCallback error - %@", USERDATA_TAG, [skin toNSObjectAtIndex:-1]]] ;
+            lua_pop(skin.L, 1) ; // remove error message
+        }
+    }
 }
 
 - (void)hide {
     self.window.isVisible = NO;
+}
+
+- (BOOL)isVisible {
+    return self.window.isVisible;
 }
 
 #pragma mark - NSTableViewDataSource
@@ -214,13 +241,14 @@
     NSArray *choices = [self getChoices];
     NSDictionary *choice = [choices objectAtIndex:row];
 
-    HSChooserCell *cellView = [tableView makeViewWithIdentifier:@"HSChooserCell" owner:self];
-
-    //cellView.backgroundStyle = NSBackgroundStyleDark;
     NSString *text         = [choice objectForKey:@"text"];
     NSString *subText      = [choice objectForKey:@"subText"];
     NSString *shortcutText = @"";
     NSImage  *image        = [choice objectForKey:@"image"];
+
+    if (text    && ![text isKindOfClass:[NSString class]])    text    = [NSString stringWithFormat:@"%@", text] ;
+    if (subText && ![subText isKindOfClass:[NSString class]]) subText = [NSString stringWithFormat:@"%@", subText] ;
+    if (image   && ![image isKindOfClass:[NSImage class]])    image   = nil ;
 
     if (row >= 0 && row < 9) {
         shortcutText = [NSString stringWithFormat:@"⌘%ld", (long)row + 1];
@@ -228,8 +256,12 @@
         shortcutText = @"";
     }
 
+    NSString *chooserCellIdentifier = subText ?  @"HSChooserCellSubtext" : @"HSChooserCell";
+    HSChooserCell *cellView = [tableView makeViewWithIdentifier:chooserCellIdentifier owner:self];
+
+
     cellView.text.stringValue = text ? text : @"";
-    cellView.subText.stringValue = subText ? subText : @"";
+    if (subText != nil) cellView.subText.stringValue = subText ? subText : @"";
     cellView.shortcutText.stringValue = shortcutText ? shortcutText : @"??";
     cellView.image.image = image ? image : [NSImage imageNamed:NSImageNameFollowLinkFreestandingTemplate];
 
@@ -258,6 +290,20 @@
         [skin pushLuaRef:*(self.refTable) ref:self.completionCallbackRef];
         [skin pushNSObject:choice];
         if (![skin protectedCallAndTraceback:1 nresults:0]) {
+            [skin logError:[NSString stringWithFormat:@"%s:completionCallback error - %@", USERDATA_TAG, [skin toNSObjectAtIndex:-1]]] ;
+            lua_pop(skin.L, 1) ; // remove error message
+        }
+    }
+}
+
+- (void)didRightClickAtRow:(NSInteger)row {
+    if (self.rightClickCallbackRef != LUA_NOREF && self.rightClickCallbackRef != LUA_REFNIL) {
+        // We have a right click callback set
+        LuaSkin *skin = [LuaSkin shared];
+        [skin pushLuaRef:*(self.refTable) ref:self.rightClickCallbackRef];
+        lua_pushinteger(skin.L, row + 1) ;
+        if (![skin protectedCallAndTraceback:1 nresults:0]) {
+            [skin logError:[NSString stringWithFormat:@"%s:rightClickCallback error - %@", USERDATA_TAG, [skin toNSObjectAtIndex:-1]]] ;
             lua_pop(skin.L, 1) ; // remove error message
         }
     }
@@ -272,6 +318,7 @@
     [skin pushLuaRef:*(self.refTable) ref:self.completionCallbackRef];
     lua_pushnil(skin.L);
     if (![skin protectedCallAndTraceback:1 nresults:0]) {
+        [skin logError:[NSString stringWithFormat:@"%s:completionCallback error - %@", USERDATA_TAG, [skin toNSObjectAtIndex:-1]]] ;
         lua_pop(skin.L, 1) ; // remove error message
     }
 }
@@ -291,6 +338,7 @@
         [skin pushLuaRef:*(self.refTable) ref:self.queryChangedCallbackRef];
         [skin pushNSObject:queryString];
         if (![skin protectedCallAndTraceback:1 nresults:0]) {
+            [skin logError:[NSString stringWithFormat:@"%s:queryChangedCallback error - %@", USERDATA_TAG, [skin toNSObjectAtIndex:-1]]] ;
             lua_pop(skin.L, 1) ; // remove error message
         }
     } else {
@@ -299,10 +347,16 @@
             NSMutableArray *filteredChoices = [[NSMutableArray alloc] init];
 
             for (NSDictionary *choice in [self getChoicesWithOptions:NO]) {
-                if ([[[choice objectForKey:@"text"] lowercaseString] containsString:[queryString lowercaseString]]) {
+                NSString *text = [choice objectForKey:@"text"];
+                if (text && ![text isKindOfClass:[NSString class]]) text = [NSString stringWithFormat:@"%@", text] ;
+                if (!text) text = @"" ;
+                if ([[text lowercaseString] containsString:[queryString lowercaseString]]) {
                     [filteredChoices addObject: choice];
                 } else if (self.searchSubText) {
-                    if ([[[choice objectForKey:@"subText"] lowercaseString] containsString:[queryString lowercaseString]]) {
+                    NSString *subText = [choice objectForKey:@"subText"];
+                    if (subText && ![subText isKindOfClass:[NSString class]]) subText = [NSString stringWithFormat:@"%@", subText] ;
+                    if (!subText) subText = @"" ;
+                    if ([[subText lowercaseString] containsString:[queryString lowercaseString]]) {
                         [filteredChoices addObject:choice];
                     }
                 }
@@ -342,6 +396,29 @@
         currentRow = [[self getChoices] count];
     }
     [self selectChoice:currentRow-1];
+}
+
+- (void)selectNextPage {
+    NSInteger currentRow = [self.choicesTableView selectedRow];
+	NSInteger count = [[self getChoices] count];
+    if (currentRow == count-1) {
+        [self selectChoice:0];
+    } else if (currentRow >= count-10) {
+        [self selectChoice:count-1];
+    } else {
+        [self selectChoice:currentRow+10];
+    }
+}
+
+- (void)selectPreviousPage {
+    NSInteger currentRow = [self.choicesTableView selectedRow];
+    if (currentRow == 0) {
+        [self selectChoice:[[self getChoices] count]-1];
+    } else if (currentRow < 10) {
+        [self selectChoice:0];
+    } else {
+        [self selectChoice:currentRow-10];
+    }
 }
 
 #pragma mark - Choice management methods
@@ -402,6 +479,8 @@
                     [[LuaSkin shared] logError:@"ERROR: data returned by hs.chooser:choices() callback could not be parsed correctly"];
                     self.currentCallbackChoices = nil;
                 }
+            } else {
+                [skin logError:[NSString stringWithFormat:@"%s:choices error - %@", USERDATA_TAG, [skin toNSObjectAtIndex:-1]]] ;
             }
             lua_pop(skin.L, 1) ; // remove result or error message
         }
@@ -440,14 +519,27 @@
     }
 }
 
-- (void)setBgLightDark:(BOOL)isDark {
-    if (isDark) {
-        self.window.appearance = [NSAppearance appearanceNamed:NSAppearanceNameVibrantDark];
-        [self.effectView setMaterial:NSVisualEffectMaterialDark];
-    } else {
-        self.window.appearance = [NSAppearance appearanceNamed:NSAppearanceNameVibrantLight];
-        [self.effectView setMaterial:NSVisualEffectMaterialLight];
+- (void)applyDarkSetting:(BOOL)beDark {
+    NSAppearance *appearance = beDark ? [NSAppearance appearanceNamed:NSAppearanceNameVibrantDark] : [NSAppearance appearanceNamed:NSAppearanceNameVibrantLight];
+    self.window.appearance = appearance;
+}
+
+- (void)setAutoBgLightDark {
+    NSString *interfaceStyle = [[NSUserDefaults standardUserDefaults] stringForKey:@"AppleInterfaceStyle"];
+    BOOL isDark = (interfaceStyle && [[interfaceStyle lowercaseString] isEqualToString:@"dark"]);
+
+    [self applyDarkSetting:isDark];
+}
+
+- (void)setBgLightDark:(NSNotification *)notification {
+    if (notification.object == nil) {
+        self.isObservingThemeChanges = YES;
+        [self setAutoBgLightDark];
+        return;
     }
+    self.isObservingThemeChanges = NO;
+
+    [self applyDarkSetting:((NSNumber *)notification.object).boolValue];
 }
 
 - (BOOL)isBgLightDark {
@@ -463,15 +555,38 @@
         //NSLog(@"Got an event: %lu %@:%i", (unsigned long)flags, [event charactersIgnoringModifiers], [[event charactersIgnoringModifiers] characterAtIndex:0]);
 
         if (flags == mods) {
-            if ([[event charactersIgnoringModifiers] isEqualToString: key] || [[event charactersIgnoringModifiers] characterAtIndex:0] == keyCode) {
-                //NSLog(@"firing action");
-                action();
-                return nil;
+            @try {
+                if ([[event charactersIgnoringModifiers] isEqualToString: key] || [[event charactersIgnoringModifiers] characterAtIndex:0] == keyCode) {
+                    //NSLog(@"firing action");
+                    action();
+                    return nil;
+                }
+            } @catch (NSException *exception) {
+                ;
+            } @finally {
+                ;
             }
         }
         return event;
     }];
     [self.eventMonitors addObject: x];
+}
+
+#pragma mark - Interface theme changes observer
+
+-(void)setIsObservingThemeChanges:(BOOL)isObservingThemeChanges {
+    if (_isObservingThemeChanges == isObservingThemeChanges) {
+        return;
+    }
+
+    _isObservingThemeChanges = isObservingThemeChanges;
+    if (isObservingThemeChanges) {
+        // Activate the observer.
+        [[NSDistributedNotificationCenter defaultCenter] addObserver:self selector:@selector(setBgLightDark:) name:@"AppleInterfaceThemeChangedNotification" object:nil];
+    } else {
+        // Deactivate the observer.
+        [[NSDistributedNotificationCenter defaultCenter] removeObserver:self name:@"AppleInterfaceThemeChangedNotification" object:nil];
+    }
 }
 
 @end

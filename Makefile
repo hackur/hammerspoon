@@ -3,6 +3,7 @@ APPFILE = build/Hammerspoon.app
 ZIPFILE = build/Hammerspoon-$(VERSION).zip
 SCHEME = Hammerspoon
 CONFIGURATION = Debug
+DOCS_SEARCH_DIRS = Hammerspoon/ extensions/
 
 all: $(APPFILE)
 
@@ -32,7 +33,11 @@ build/html: build/docs.json
 	mkdir -p $@
 	rm -rf $@/*
 	cp scripts/docs/templates/docs.css $@
-	scripts/docs/bin/genhtml $@ < $<
+	cp scripts/docs/templates/jquery.js $@
+	cp build/docs.json $@
+	cp build/docs_index.json $@
+	scripts/docs/bin/build_docs.py -o build/ --html $(DOCS_SEARCH_DIRS)
+	scripts/docs/bin/build_docs.py -o build/ --markdown $(DOCS_SEARCH_DIRS)
 
 build/html/LuaSkin:
 	headerdoc2html -u -o $@ LuaSkin/LuaSkin/Skin.h
@@ -41,11 +46,10 @@ build/html/LuaSkin:
 	rmdir $@/Skin_h
 
 build/docs.sqlite: build/docs.json
-	rm -f $@
-	scripts/docs/bin/gensql < $< | sqlite3 $@
+	scripts/docs/bin/build_docs.py -o build/ --sql $(DOCS_SEARCH_DIRS)
 
 build/docs.json: build
-	find . -type f \( -name '*.lua' -o -name '*.m' \) -not -path '*/sample-extensions/*' -not -path './build/*' -not -path './extensions/.build/*' -not -path './Pods/*' -exec cat {} + | scripts/docs/bin/gencomments | scripts/docs/bin/genjson > $@
+	scripts/docs/bin/build_docs.py -o build/ --json $(DOCS_SEARCH_DIRS)
 
 build:
 	mkdir -p build

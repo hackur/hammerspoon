@@ -98,6 +98,7 @@ typedef NS_ENUM(NSInteger, NSStatusBarItemPriority) {
 @interface HSMenubarCallbackObject : NSObject
 @property lua_State *L;
 @property int fn;
+@property int item;
 @end
 @implementation HSMenubarCallbackObject
 // Generic callback runner that will execute a Lua function stored in self.fn
@@ -135,7 +136,9 @@ typedef NS_ENUM(NSInteger, NSStatusBarItemPriority) {
         lua_pushboolean(L, isFnKey);
         lua_setfield(L, -2, "fn");
 
-        fn_result = [skin protectedCallAndTraceback:1 nresults:1];
+        [skin pushLuaRef:refTable ref:self.item];
+
+        fn_result = [skin protectedCallAndTraceback:2 nresults:1];
     } else {
         // event is very unlikely to be nil, but we'll handle it just in case
         fn_result = [skin protectedCallAndTraceback:0 nresults:1];
@@ -283,6 +286,7 @@ void parse_table(lua_State *L, int idx, NSMenu *menu, NSSize stateBoxImageSize) 
                 lua_pushvalue(L, -1);
                 delegate.fn = [skin luaRef:refTable];
                 delegate.L = L;
+                delegate.item = [skin luaRef:refTable atIndex:-2];
                 [menuItem setTarget:delegate];
                 [menuItem setAction:@selector(click:)];
                 [menuItem setRepresentedObject:delegate]; // representedObject is a strong reference, so we don't need to retain the delegate ourselves
@@ -369,6 +373,15 @@ void parse_table(lua_State *L, int idx, NSMenu *menu, NSSize stateBoxImageSize) 
             }
             lua_pop(L, 1) ;
 
+// MARK: shortcut key
+            lua_getfield(L, -1, "shortcut");
+            if (lua_isstring(L, -1)) {
+                NSString *shortcutKey = [skin toNSObjectAtIndex:-1];
+                [menuItem setKeyEquivalent:shortcutKey];
+                [menuItem setKeyEquivalentModifierMask:0];
+            }
+            lua_pop(L, 1);
+
             // We've finished parsing all our options, so now add the menu item to the menu!
             [menu addItem:menuItem];
         }
@@ -386,6 +399,7 @@ void erase_menu_items(lua_State *L, NSMenu *menu) {
         if (target) {
             // This menuitem has a delegate object. Destroy its Lua reference and nuke all the references to the object, so ARC will deallocate it
             target.fn = [skin luaUnref:refTable ref:target.fn];
+            target.item = [skin luaUnref:refTable ref:target.item];
             [menuItem setTarget:nil];
             [menuItem setAction:nil];
             [menuItem setRepresentedObject:nil];
@@ -568,7 +582,7 @@ static int menubarSetTitle(lua_State *L) {
     return 1 ;
 }
 
-/// hs.menubar:setIcon(imageData) -> menubaritem or nil
+/// hs.menubar:setIcon(imageData[, template]) -> menubaritem or nil
 /// Method
 /// Sets the image of a menubar item object. The image will be displayed in the system menubar
 ///
@@ -578,6 +592,7 @@ static int menubarSetTitle(lua_State *L) {
 ///   * A string containing a path to an image file
 ///   * A string beginning with `ASCII:` which signifies that the rest of the string is interpreted as a special form of ASCII diagram, which will be rendered to an image and used as the icon. See the notes below for information about the special format of ASCII diagram.
 ///   * nil, indicating that the current image is to be removed
+///  * template - An optional boolean value which defaults to true. If it's true, the provided image will be treated as a "template" image, which allows it to automatically support OS X 10.10's Dark Mode. If it's false, the image will be used as is, supporting colour.
 ///
 /// Returns:
 ///  * the menubaritem if the image was loaded and set, `nil` if it could not be found or loaded
@@ -591,7 +606,7 @@ static int menubarSetTitle(lua_State *L) {
 ///
 ///  * Icons should be small, transparent images that roughly match the size of normal menubar icons, otherwise they will look very strange. Note that if you're using an `hs.image` image object as the icon, you can force it to be resized with `hs.image:setSize({w=16,h=16})`
 ///  * Retina scaling is supported if the image is either scalable (e.g. a PDF produced by Adobe Illustrator) or contain multiple sizes (e.g. a TIFF with small and large images). Images will not automatically do the right thing if you have a @2x version present
-///  * Icons are specified as "templates", which allows them to automatically support OS X 10.10's Dark Mode, but this also means they cannot be complicated, colour images
+///  * Icons are by default specified as "templates", which allows them to automatically support OS X 10.10's Dark Mode, but this also means they cannot be complicated, colour images.
 ///  * For examples of images that work well, see Hammerspoon.app/Contents/Resources/statusicon.tiff (for a retina-capable multi-image TIFF icon) or [https://github.com/jigish/slate/blob/master/Slate/status.pdf](https://github.com/jigish/slate/blob/master/Slate/status.pdf) (for a scalable vector PDF icon)
 ///  * For guidelines on the sizing of images, see [http://alastairs-place.net/blog/2013/07/23/nsstatusitem-what-size-should-your-icon-be/](http://alastairs-place.net/blog/2013/07/23/nsstatusitem-what-size-should-your-icon-be/)
  ///  * To use the ASCII diagram image support, see http://cocoamine.net/blog/2015/03/20/replacing-photoshop-with-nsstring/ and be sure to preface your ASCII diagram with the special string `ASCII:`
@@ -610,7 +625,11 @@ static int menubarSetIcon(lua_State *L) {
             lua_pushnil(L);
             return 1;
         }
-        [iconImage setTemplate:YES];
+        if (lua_isboolean(L, 3) && !lua_toboolean(L, 3)) {
+            [iconImage setTemplate:NO];
+        } else {
+            [iconImage setTemplate:YES];
+        }
     }
     [(__bridge NSStatusItem*)menuBarItem->menuBarItemObject setImage:iconImage];
 
@@ -722,6 +741,7 @@ static int menubarSetClickCallback(lua_State *L) {
 ///  * The available keys for each menu item are (note that `title` is the only required key -- all other keys are optional):
 ///      * `title`           - A string or `hs.styledtext` object to be displayed in the menu. If this is the special string `"-"` the item will be rendered as a menu separator.  This key can be set to the empty string (""), but it must be present.
 ///      * `fn`              - A function to be executed when the menu item is clicked
+///         * The function will be called with two arguments. The first argument will be a table containing boolean values indicating which keyboard modifiers were held down when the menubar item was clicked (see `menuTable` parameter for possible keys) and the second is the table representing the item.
 ///      * `checked`         - A boolean to indicate if the menu item should have a checkmark (by default) next to it or not. Defaults to false.
 ///      * `state`           - a text value of "on", "off", or "mixed" indicating the menu item state.  "on" and "off" are equivalent to `checked` being true or false respectively, and "mixed" will have a dash (by default) beside it.
 ///      * `disabled`        - A boolean to indicate if the menu item should be unselectable or not. Defaults to false (i.e. menu items are selectable by default)
@@ -730,6 +750,7 @@ static int menubarSetClickCallback(lua_State *L) {
 ///         * a menu item with a sub-menu is also a clickable target, so it can also have an `fn` key.
 ///      * `image`           - An image to display in the menu to the right of any state image or checkmark and to the left of the menu item title.  This image is not constrained by the size set with [hs.menubar:stateImageSize](#stateImageSize), so you should adjust it with `hs.image:setSize` if your image is extremely large or small.
 ///      * `tooltip`         - A tool tip to display if you hover the cursor over a menu item for a few seconds.
+///      * `shortcut`        - A string containing a single character, which will be used as the keyboard shortcut for the menu item. Note that if you use a capital letter, the Shift key will be required to activate the shortcut.
 ///      * `indent`          - An integer from 0 to 15 indicating how far to the right a menu item should be indented.  Defaults to 0.
 ///      * `onStateImage`    - An image to display when `checked` is true or `state` is set to "on".  This image size is constrained to the size set by [hs.menubar:stateImageSize](#stateImageSize).  If this key is not set, a checkmark will be displayed for checked or "on" menu items.
 ///      * `offStateImage`   - An image to display when `checked` is false or `state` is set to "off".  This image size is constrained to the size set by [hs.menubar:stateImageSize](#stateImageSize).  If this key is not set, no special marking appears next to the menu item.
@@ -820,6 +841,7 @@ static int menubar_delete(lua_State *L) {
 
     if (!menuBarItem->removed) {
         [statusBar removeStatusItem:statusItem];
+        menuBarItem->removed = YES;
     }
 
     menuBarItem->menuBarItemObject = nil;
@@ -1061,7 +1083,7 @@ static int menubarFrame(lua_State *L) {
 /// Returns:
 ///  * if a parameter is provided, returns the menubar item; otherwise returns the current value.
 ///
-/// Noted:
+/// Notes:
 ///  * An image is used rather than a checkmark or dash only when you set them with the `onStateImage`, `offStateImage`, or `mixedStateImage` keys.  If you are not using these keys, then this method will have no visible effect on the menu's rendering.  See  [hs.menubar:setMenu](#setMenu) for more information.
 ///  * If you are setting the menu contents with a static table, you should invoke this method before invoking [hs.menubar:setMenu](#setMenu), as changes will only go into effect when the table is next converted to a menu structure.
 static int menubarStateImageSize(lua_State *L) {

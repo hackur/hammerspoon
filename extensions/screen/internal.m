@@ -35,7 +35,7 @@ static dispatch_queue_t notificationQueue;
 /// Method
 /// Returns a screen's unique ID
 ///
-/// Paramters:
+/// Parameters:
 ///  * None
 ///
 /// Returns:
@@ -299,7 +299,7 @@ static int screen_gammaGet(lua_State* L) {
     CGGammaValue *greenTable = malloc(sizeof(CGGammaValue) * gammaCapacity);
     CGGammaValue *blueTable = malloc(sizeof(CGGammaValue) * gammaCapacity);
 
-    if (CGGetDisplayTransferByTable(0, gammaCapacity, redTable, greenTable, blueTable, &sampleCount) != kCGErrorSuccess) {
+    if (CGGetDisplayTransferByTable(screen_id, gammaCapacity, redTable, greenTable, blueTable, &sampleCount) != kCGErrorSuccess) {
         free(redTable);
         free(greenTable);
         free(blueTable);
@@ -684,7 +684,7 @@ void screen_gammaReapply(CGDirectDisplayID display) {
 }
 
 static int screen_gc(lua_State* L) {
-    NSScreen* screen __unused = get_screen_arg(L, 1);
+    NSScreen* screen __unused = (__bridge_transfer NSScreen*)*((void**)luaL_checkudata(L, 1, USERDATA_TAG));
     return 0;
 }
 
@@ -1024,10 +1024,44 @@ static int screen_desktopImageURL(lua_State *L) {
     return 1;
 }
 
-static int screens_gc(lua_State* L __unused) {
+/// hs.screen.accessibilitySettings() -> table
+/// Function
+/// Gets the current state of the screen-related accessibility settings
+///
+/// Parameters:
+///  * None
+///
+/// Returns:
+///  * A table containing the following keys, and corresponding boolean values for whether the user has enabled these options:
+///    * ReduceMotion (only available on macOS 10.12 or later)
+///    * ReduceTransparency
+///    * IncreaseContrast
+///    * InvertColors (only available on macOS 10.12 or later)
+///    * DifferentiateWithoutColor
+static int screen_accessibilitySettings(lua_State *L) {
     LuaSkin *skin = [LuaSkin shared];
-    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TBREAK];
+    [skin checkArgs:LS_TBREAK];
 
+    NSWorkspace *ws = [NSWorkspace sharedWorkspace];
+    NSMutableDictionary *settings = [[NSMutableDictionary alloc] initWithCapacity:5];
+
+    if ([[NSProcessInfo processInfo] isOperatingSystemAtLeastVersion:(NSOperatingSystemVersion){10, 12, 0}]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpartial-availability"
+        [settings setObject:[NSNumber numberWithBool:ws.accessibilityDisplayShouldInvertColors] forKey:@"InvertColors"];
+        [settings setObject:[NSNumber numberWithBool:ws.accessibilityDisplayShouldReduceMotion] forKey:@"ReduceMotion"];
+#pragma clang diagnostic pop
+    }
+
+    [settings setObject:[NSNumber numberWithBool:ws.accessibilityDisplayShouldReduceTransparency] forKey:@"ReduceTransparency"];
+    [settings setObject:[NSNumber numberWithBool:ws.accessibilityDisplayShouldIncreaseContrast] forKey:@"IncreaseContrast"];
+    [settings setObject:[NSNumber numberWithBool:ws.accessibilityDisplayShouldDifferentiateWithoutColor] forKey:@"DifferentiateWithoutColor"];
+
+    [skin pushNSObject:settings];
+    return 1;
+}
+
+static int screens_gc(lua_State* L __unused) {
     CGDisplayRemoveReconfigurationCallback(displayReconfigurationCallback, NULL);
     screen_gammaRestore(nil);
 
@@ -1061,6 +1095,7 @@ static const luaL_Reg screenlib[] = {
     {"allScreens", screen_allScreens},
     {"mainScreen", screen_mainScreen},
     {"restoreGamma", screen_gammaRestore},
+    {"accessibilitySettings", screen_accessibilitySettings},
 
     {NULL, NULL}
 };

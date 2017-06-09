@@ -1,5 +1,5 @@
-#import <Cocoa/Cocoa.h>
-#import <LuaSkin/LuaSkin.h>
+@import Cocoa;
+@import LuaSkin;
 
 #pragma mark - Support Functions and Classes
 
@@ -196,8 +196,9 @@ static int pasteboard_pasteboardItemTypes(lua_State* L) {
 
     lua_newtable(L) ;
 // make sure there is something on the pasteboard...
-    if ([[thePasteboard pasteboardItems] count] > 0) {
-        NSPasteboardItem* item = [[thePasteboard pasteboardItems] objectAtIndex:0];
+    NSArray *items = [thePasteboard pasteboardItems] ;
+    if (items && [items count] > 0) {
+        NSPasteboardItem* item = [items objectAtIndex:0];
         for (NSString* type in [item types]) {
             lua_pushstring(L, [type UTF8String]) ; lua_rawseti(L, -2, luaL_len(L, -2) + 1) ;
         }
@@ -267,13 +268,15 @@ static int allPBItemTypes(lua_State *L) {
     NSPasteboard* thePasteboard = lua_to_pasteboard(L, 1);
     lua_newtable(L) ;
     NSArray *items = [thePasteboard pasteboardItems] ;
-    for(NSUInteger i = 0 ; i < [items count]; i++) {
-        lua_newtable(L) ;
-        NSPasteboardItem* item = [items objectAtIndex:i];
-        for (NSString* type in [item types]) {
-            [skin pushNSObject:type] ; lua_rawseti(L, -2, luaL_len(L, -2) + 1) ;
+    if (items) {
+        for(NSUInteger i = 0 ; i < [items count]; i++) {
+            lua_newtable(L) ;
+            NSPasteboardItem* item = [items objectAtIndex:i];
+            for (NSString* type in [item types]) {
+                [skin pushNSObject:type] ; lua_rawseti(L, -2, luaL_len(L, -2) + 1) ;
+            }
+            lua_rawseti(L, -2, luaL_len(L, -2) + 1) ;
         }
-        lua_rawseti(L, -2, luaL_len(L, -2) + 1) ;
     }
     return 1;
 }
@@ -296,13 +299,21 @@ static int readStringObjects(lua_State *L) {
     [skin checkArgs:LS_TNUMBER | LS_TSTRING | LS_TNIL | LS_TBOOLEAN | LS_TOPTIONAL,
                     LS_TBOOLEAN | LS_TOPTIONAL,
                     LS_TBREAK] ;
-    if ((lua_type(L, 1) == LUA_TBOOLEAN) && (lua_gettop(L) != 1))
-        return luaL_argerror(L, 1, "string or nil expected") ;
 
-    NSPasteboard* pb = (lua_type(L, 1) == LUA_TBOOLEAN) ?
-                          [NSPasteboard generalPasteboard] : lua_to_pasteboard(L, 1);
-    BOOL getAll = (lua_type(L, lua_gettop(L)) == LUA_TBOOLEAN) ?
-                          (BOOL)lua_toboolean(L, lua_gettop(L)) : NO ;
+    NSPasteboard* pb ;
+    BOOL getAll = NO ;
+
+    if (lua_gettop(L) >= 1 && lua_isboolean(L, -1)) {
+        getAll = (BOOL)lua_toboolean(L, -1) ;
+        lua_pop(L, 1) ;
+    }
+    if (lua_gettop(L) >= 1) {
+        if (lua_isboolean(L, 1))
+            return luaL_argerror(L, 1, "string or nil expected") ;
+        pb = lua_to_pasteboard(L, 1) ;
+    } else {
+        pb = [NSPasteboard generalPasteboard] ;
+    }
 
     NSArray *results = [pb readObjectsForClasses:@[[NSString class]] options:@{}] ;
     if (results && ([results count] != 0)) {
@@ -313,6 +324,317 @@ static int readStringObjects(lua_State *L) {
         }
     } else {
         lua_pushnil(L) ;
+    }
+    return 1 ;
+}
+
+/// hs.pasteboard.readDataForUTI([name], uti) -> string
+/// Function
+/// Returns the first item on the pasteboard with the specified UTI as raw data
+///
+/// Parameters:
+///  * name - an optional string indicating the pasteboard name.  If nil or not present, defaults to the system pasteboard.
+///  * uti  - a string specifying the UTI of the pasteboard item to retrieve.
+///
+/// Returns:
+///  * a lua string containing the raw data of the specified pasteboard item
+///
+/// Notes:
+///  * The UTI's of the items on the pasteboard can be determined with the [hs.pasteboard.allContentTypes](#allContentTypes) and [hs.pasteboard.contentTypes](#contentTypes) functions.
+static int readItemForType(lua_State *L) {
+    LuaSkin *skin = [LuaSkin shared] ;
+    NSPasteboard *pb ;
+    NSString     *type ;
+    if (lua_gettop(L) == 1) {
+        [skin checkArgs:LS_TSTRING, LS_TBREAK] ;
+        pb   = [NSPasteboard generalPasteboard] ;
+        type = [skin toNSObjectAtIndex:1] ;
+    } else {
+        [skin checkArgs:LS_TNUMBER | LS_TSTRING | LS_TNIL, LS_TSTRING, LS_TBREAK] ;
+        pb = lua_to_pasteboard(L, 1) ;
+        type = [skin toNSObjectAtIndex:2] ;
+    }
+    if (pb && type) {
+        @try {
+            [skin pushNSObject:[pb dataForType:type]] ;
+        } @catch (NSException *exception) {
+            return luaL_error(L, [[exception reason] UTF8String]) ;
+        }
+    } else if (!pb) {
+        return luaL_error(L, "unable to get pasteboard") ;
+    } else {
+        return luaL_error(L, "unable to evaluate type string") ;
+    }
+    return 1 ;
+}
+
+/// hs.pasteboard.readPListForUTI([name], uti) -> any
+/// Function
+/// Returns the first item on the pasteboard with the specified UTI as a property list item
+///
+/// Parameters:
+///  * name - an optional string indicating the pasteboard name.  If nil or not present, defaults to the system pasteboard.
+///  * uti  - a string specifying the UTI of the pasteboard item to retrieve.
+///
+/// Returns:
+///  * a lua item representing the property list value of the pasteboard item specified
+///
+/// Notes:
+///  * The UTI's of the items on the pasteboard can be determined with the [hs.pasteboard.allContentTypes](#allContentTypes) and [hs.pasteboard.contentTypes](#contentTypes) functions.
+///  * Property lists consist only of certain types of data: tables, strings, numbers, dates, binary data, and Boolean values.
+static int readPropertyListForType(lua_State *L) {
+    LuaSkin *skin = [LuaSkin shared] ;
+    NSPasteboard *pb ;
+    NSString     *type ;
+    if (lua_gettop(L) == 1) {
+        [skin checkArgs:LS_TSTRING, LS_TBREAK] ;
+        pb   = [NSPasteboard generalPasteboard] ;
+        type = [skin toNSObjectAtIndex:1] ;
+    } else {
+        [skin checkArgs:LS_TNUMBER | LS_TSTRING | LS_TNIL, LS_TSTRING, LS_TBREAK] ;
+        pb = lua_to_pasteboard(L, 1) ;
+        type = [skin toNSObjectAtIndex:2] ;
+    }
+    if (pb && type) {
+        // uses dataForType: which is documented to throw exceptions for errors
+        @try {
+            [skin pushNSObject:[pb propertyListForType:type]] ;
+        } @catch (NSException *exception) {
+            return luaL_error(L, [[exception reason] UTF8String]) ;
+        }
+    } else if (!pb) {
+        return luaL_error(L, "unable to get pasteboard") ;
+    } else {
+        return luaL_error(L, "unable to evaluate type string") ;
+    }
+    return 1 ;
+}
+
+/// hs.pasteboard.readArchiverDataForUTI([name], uti) -> any
+/// Function
+/// Returns the first item on the pasteboard with the specified UTI. The data on the pasteboard must be encoded as a keyed archive object conforming to NSKeyedArchiver.
+///
+/// Parameters:
+///  * name - an optional string indicating the pasteboard name.  If nil or not present, defaults to the system pasteboard.
+///  * uti  - a string specifying the UTI of the pasteboard item to retrieve.
+///
+/// Returns:
+///  * a lua item representing the archived data if it can be decoded. Generates an error if the data is in the wrong format.
+///
+/// Notes:
+///  * NSKeyedArchiver specifies an architecture-independent format that is often used in OS X applications to store and transmit objects between applications and when storing data to a file. It works by recording information about the object types and key-value pairs which make up the objects being stored.
+///  * Only objects which have conversion functions built in to Hammerspoon can be converted. A string representation describing unrecognized types wil be returned. If you find a common data type that you believe may be of interest to Hammerspoon users, feel free to contribute a conversion function or make a request in the Hammerspoon Google group or Github site.
+///  * Some applications may define their own classes which can be archived.  Hammerspoon will be unable to recognize these types if the application does not make the object type available in one of its frameworks.  You *may* be able to load the necessary framework with `package.loadlib("/Applications/appname.app/Contents/Frameworks/frameworkname.framework/frameworkname", "*")` before retrieving the data, but a full representation of the data in Hammerspoon is probably not possible without support from the Application's developers.
+static int readArchivedDataForType(lua_State *L) {
+    LuaSkin *skin = [LuaSkin shared] ;
+    NSPasteboard *pb ;
+    NSString     *type ;
+    if (lua_gettop(L) == 1) {
+        [skin checkArgs:LS_TSTRING, LS_TBREAK] ;
+        pb   = [NSPasteboard generalPasteboard] ;
+        type = [skin toNSObjectAtIndex:1] ;
+    } else {
+        [skin checkArgs:LS_TNUMBER | LS_TSTRING | LS_TNIL, LS_TSTRING, LS_TBREAK] ;
+        pb = lua_to_pasteboard(L, 1) ;
+        type = [skin toNSObjectAtIndex:2] ;
+    }
+    if (pb && type) {
+        // uses dataForType: which is documented to throw exceptions for errors
+        @try {
+            NSData *holding = [pb dataForType:type] ;
+            id realItem = [NSKeyedUnarchiver unarchiveObjectWithData:holding] ;
+            [skin pushNSObject:realItem withOptions:LS_NSDescribeUnknownTypes] ;
+        } @catch (NSException *exception) {
+            return luaL_error(L, [[exception reason] UTF8String]) ;
+        }
+    } else if (!pb) {
+        return luaL_error(L, "unable to get pasteboard") ;
+    } else {
+        return luaL_error(L, "unable to evaluate type string") ;
+    }
+    return 1 ;
+}
+
+/// hs.pasteboard.writeArchiverDataForUTI([name], uti, data, [add]) -> boolean
+/// Function
+/// Sets the pasteboard to the contents of the data and assigns its type to the specified UTI. The data will be encoded as an archive conforming to NSKeyedArchiver.
+///
+/// Parameters:
+///  * name - an optional string indicating the pasteboard name.  If nil or not present, defaults to the system pasteboard.
+///  * uti  - a string specifying the UTI of the pasteboard item to set.
+///  * data - any type representable in Lua which will be converted into the appropriate NSObject types and archived with NSKeyedArchiver.  All Lua basic types are supported as well as those NSObject types handled by Hammerspoon modules (NSColor, NSStyledText, NSImage, etc.)
+///  * add  - an optional boolean value specifying if data with other UTI values should retain.  This value must be strictly either true or false if given, to avoid ambiguity with preceding parameters.
+///
+/// Returns:
+///  * True if the operation succeeded, otherwise false (which most likely means ownership of the pasteboard has changed)
+///
+/// Notes:
+///  * NSKeyedArchiver specifies an architecture-independent format that is often used in OS X applications to store and transmit objects between applications and when storing data to a file. It works by recording information about the object types and key-value pairs which make up the objects being stored.
+///  * Only objects which have conversion functions built in to Hammerspoon can be converted.
+///
+///  * A full list of NSObjects supported directly by Hammerspoon is planned in a future Wiki article.
+static int writeArchivedDataForType(lua_State *L) {
+    LuaSkin *skin = [LuaSkin shared] ;
+    NSPasteboard *pb ;
+    BOOL          add = NO ;
+    NSString     *type ;
+    id           data ;
+    if (lua_gettop(L) >= 3) {
+        if (lua_isboolean(L, -1)) {
+            add = (BOOL)lua_toboolean(L, -1) ;
+            lua_settop(L, -2) ;
+        } else if (lua_isnil(L, -1)) {
+            lua_settop(L, -2) ;
+        }
+    }
+    if (lua_gettop(L) == 2) {
+        [skin checkArgs:LS_TSTRING, LS_TANY, LS_TBREAK] ;
+        pb   = [NSPasteboard generalPasteboard] ;
+        type = [skin toNSObjectAtIndex:1] ;
+        data = [skin toNSObjectAtIndex:2 withOptions:LS_NSPreserveLuaStringExactly] ;
+    } else {
+        [skin checkArgs:LS_TNUMBER | LS_TSTRING | LS_TNIL, LS_TSTRING, LS_TANY, LS_TBREAK] ;
+        pb = lua_to_pasteboard(L, 1) ;
+        type = [skin toNSObjectAtIndex:2] ;
+        data = [skin toNSObjectAtIndex:3 withOptions:LS_NSPreserveLuaStringExactly] ;
+    }
+    if (pb && type && data) {
+        // uses setData:forType: which is documented to throw exceptions for errors
+        @try {
+            NSData *encoded = [NSKeyedArchiver archivedDataWithRootObject:data];
+            if (!add) {
+                [pb clearContents] ;
+            }
+            lua_pushboolean(L, [pb setData:encoded forType:type]) ;
+        } @catch (NSException *exception) {
+            return luaL_error(L, [[exception reason] UTF8String]) ;
+        }
+    } else if (!pb) {
+        return luaL_error(L, "unable to get pasteboard") ;
+    } else if (!type) {
+        return luaL_error(L, "unable to evaluate type string") ;
+    } else {
+        return luaL_error(L, "unable to evaluate data string") ;
+    }
+    return 1 ;
+}
+
+/// hs.pasteboard.writeDataForUTI([name], uti, data, [add]) -> boolean
+/// Function
+/// Sets the pasteboard to the contents of the data and assigns its type to the specified UTI.
+///
+/// Parameters:
+///  * name - an optional string indicating the pasteboard name.  If nil or not present, defaults to the system pasteboard.
+///  * uti  - a string specifying the UTI of the pasteboard item to set.
+///  * data - a string specifying the raw data to assign to the pasteboard.
+///  * add  - an optional boolean value specifying if data with other UTI values should retain.  This value must be strictly either true or false if given, to avoid ambiguity with preceding parameters.
+///
+/// Returns:
+///  * True if the operation succeeded, otherwise false (which most likely means ownership of the pasteboard has changed)
+///
+/// Notes:
+///  * The UTI's of the items on the pasteboard can be determined with the [hs.pasteboard.allContentTypes](#allContentTypes) and [hs.pasteboard.contentTypes](#contentTypes) functions.
+static int writeItemForType(lua_State *L) {
+    LuaSkin *skin = [LuaSkin shared] ;
+    NSPasteboard *pb ;
+    BOOL          add = NO ;
+    NSString     *type ;
+    NSData       *data ;
+    if (lua_gettop(L) >= 3) {
+        if (lua_isboolean(L, -1)) {
+            add = (BOOL)lua_toboolean(L, -1) ;
+            lua_settop(L, -2) ;
+        } else if (lua_isnil(L, -1)) {
+            lua_settop(L, -2) ;
+        }
+    }
+    if (lua_gettop(L) == 2) {
+        [skin checkArgs:LS_TSTRING, LS_TSTRING, LS_TBREAK] ;
+        pb   = [NSPasteboard generalPasteboard] ;
+        type = [skin toNSObjectAtIndex:1] ;
+        data = [skin toNSObjectAtIndex:2 withOptions:LS_NSLuaStringAsDataOnly] ;
+    } else {
+        [skin checkArgs:LS_TNUMBER | LS_TSTRING | LS_TNIL, LS_TSTRING, LS_TSTRING, LS_TBREAK] ;
+        pb = lua_to_pasteboard(L, 1) ;
+        type = [skin toNSObjectAtIndex:2] ;
+        data = [skin toNSObjectAtIndex:3 withOptions:LS_NSLuaStringAsDataOnly] ;
+    }
+    if (pb && type && data) {
+        @try {
+            if (!add) {
+                [pb clearContents] ;
+            }
+            lua_pushboolean(L, [pb setData:data forType:type]) ;
+        } @catch (NSException *exception) {
+            return luaL_error(L, [[exception reason] UTF8String]) ;
+        }
+    } else if (!pb) {
+        return luaL_error(L, "unable to get pasteboard") ;
+    } else if (!type) {
+        return luaL_error(L, "unable to evaluate type string") ;
+    } else {
+        return luaL_error(L, "unable to evaluate data string") ;
+    }
+    return 1 ;
+}
+
+/// hs.pasteboard.writePListForUTI([name], uti, data, [add]) -> boolean
+/// Function
+/// Sets the pasteboard to the contents of the data and assigns its type to the specified UTI.
+///
+/// Parameters:
+///  * name - an optional string indicating the pasteboard name.  If nil or not present, defaults to the system pasteboard.
+///  * uti  - a string specifying the UTI of the pasteboard item to set.
+///  * data - a lua type which can be represented as a property list value.
+///  * add  - an optional boolean value specifying if data with other UTI values should retain.  This value must be strictly either true or false if given, to avoid ambiguity with preceding parameters.
+///
+/// Returns:
+///  * True if the operation succeeded, otherwise false (which most likely means ownership of the pasteboard has changed)
+///
+/// Notes:
+///  * The UTI's of the items on the pasteboard can be determined with the [hs.pasteboard.allContentTypes](#allContentTypes) and [hs.pasteboard.contentTypes](#contentTypes) functions.
+///  * Property lists consist only of certain types of data: tables, strings, numbers, dates, binary data, and Boolean values.
+static int writePropertyListForType(lua_State *L) {
+    LuaSkin *skin = [LuaSkin shared] ;
+    NSPasteboard *pb ;
+    BOOL          add = NO ;
+    NSString     *type ;
+    id           data ;
+    if (lua_gettop(L) >= 3) {
+        if (lua_isboolean(L, -1)) {
+            add = (BOOL)lua_toboolean(L, -1) ;
+            lua_settop(L, -2) ;
+        } else if (lua_isnil(L, -1)) {
+            lua_settop(L, -2) ;
+        }
+    }
+    if (lua_gettop(L) == 2) {
+        [skin checkArgs:LS_TSTRING, LS_TANY, LS_TBREAK] ;
+        pb   = [NSPasteboard generalPasteboard] ;
+        type = [skin toNSObjectAtIndex:1] ;
+        data = [skin toNSObjectAtIndex:2 withOptions:LS_NSPreserveLuaStringExactly] ;
+    } else {
+        [skin checkArgs:LS_TNUMBER | LS_TSTRING | LS_TNIL, LS_TSTRING, LS_TANY, LS_TBREAK] ;
+        pb = lua_to_pasteboard(L, 1) ;
+        type = [skin toNSObjectAtIndex:2] ;
+        data = [skin toNSObjectAtIndex:3 withOptions:LS_NSPreserveLuaStringExactly] ;
+    }
+    if (pb && type && data) {
+        // uses setData:forType: which is documented to throw exceptions for errors
+        @try {
+            if (!add) {
+                [pb clearContents] ;
+            }
+            lua_pushboolean(L, [pb setPropertyList:data forType:type]) ;
+        } @catch (NSException *exception) {
+            return luaL_error(L, [[exception reason] UTF8String]) ;
+        }
+    } else if (!pb) {
+        return luaL_error(L, "unable to get pasteboard") ;
+    } else if (!type) {
+        return luaL_error(L, "unable to evaluate type string") ;
+    } else {
+        return luaL_error(L, "unable to evaluate data string") ;
     }
     return 1 ;
 }
@@ -335,13 +657,21 @@ static int readAttributedStringObjects(lua_State *L) {
     [skin checkArgs:LS_TNUMBER | LS_TSTRING | LS_TNIL | LS_TBOOLEAN | LS_TOPTIONAL,
                     LS_TBOOLEAN | LS_TOPTIONAL,
                     LS_TBREAK] ;
-    if ((lua_type(L, 1) == LUA_TBOOLEAN) && (lua_gettop(L) != 1))
-        return luaL_argerror(L, 1, "string or nil expected") ;
 
-    NSPasteboard* pb = (lua_type(L, 1) == LUA_TBOOLEAN) ?
-                          [NSPasteboard generalPasteboard] : lua_to_pasteboard(L, 1);
-    BOOL getAll = (lua_type(L, lua_gettop(L)) == LUA_TBOOLEAN) ?
-                          (BOOL)lua_toboolean(L, lua_gettop(L)) : NO ;
+    NSPasteboard* pb ;
+    BOOL getAll = NO ;
+
+    if (lua_gettop(L) >= 1 && lua_isboolean(L, -1)) {
+        getAll = (BOOL)lua_toboolean(L, -1) ;
+        lua_pop(L, 1) ;
+    }
+    if (lua_gettop(L) >= 1) {
+        if (lua_isboolean(L, 1))
+            return luaL_argerror(L, 1, "string or nil expected") ;
+        pb = lua_to_pasteboard(L, 1) ;
+    } else {
+        pb = [NSPasteboard generalPasteboard] ;
+    }
 
     NSArray *results = [pb readObjectsForClasses:@[[NSAttributedString class]] options:@{}] ;
     if (results && ([results count] != 0)) {
@@ -371,13 +701,21 @@ static int readSoundObjects(lua_State *L) {
     [skin checkArgs:LS_TNUMBER | LS_TSTRING | LS_TNIL | LS_TBOOLEAN | LS_TOPTIONAL,
                     LS_TBOOLEAN | LS_TOPTIONAL,
                     LS_TBREAK] ;
-    if ((lua_type(L, 1) == LUA_TBOOLEAN) && (lua_gettop(L) != 1))
-        return luaL_argerror(L, 1, "string or nil expected") ;
 
-    NSPasteboard* pb = (lua_type(L, 1) == LUA_TBOOLEAN) ?
-                          [NSPasteboard generalPasteboard] : lua_to_pasteboard(L, 1);
-    BOOL getAll = (lua_type(L, lua_gettop(L)) == LUA_TBOOLEAN) ?
-                          (BOOL)lua_toboolean(L, lua_gettop(L)) : NO ;
+    NSPasteboard* pb ;
+    BOOL getAll = NO ;
+
+    if (lua_gettop(L) >= 1 && lua_isboolean(L, -1)) {
+        getAll = (BOOL)lua_toboolean(L, -1) ;
+        lua_pop(L, 1) ;
+    }
+    if (lua_gettop(L) >= 1) {
+        if (lua_isboolean(L, 1))
+            return luaL_argerror(L, 1, "string or nil expected") ;
+        pb = lua_to_pasteboard(L, 1) ;
+    } else {
+        pb = [NSPasteboard generalPasteboard] ;
+    }
 
     NSArray *results = [pb readObjectsForClasses:@[[NSSound class]] options:@{}] ;
     if (results && ([results count] != 0)) {
@@ -407,13 +745,21 @@ static int readImageObjects(lua_State *L) {
     [skin checkArgs:LS_TNUMBER | LS_TSTRING | LS_TNIL | LS_TBOOLEAN | LS_TOPTIONAL,
                     LS_TBOOLEAN | LS_TOPTIONAL,
                     LS_TBREAK] ;
-    if ((lua_type(L, 1) == LUA_TBOOLEAN) && (lua_gettop(L) != 1))
-        return luaL_argerror(L, 1, "string or nil expected") ;
 
-    NSPasteboard* pb = (lua_type(L, 1) == LUA_TBOOLEAN) ?
-                          [NSPasteboard generalPasteboard] : lua_to_pasteboard(L, 1);
-    BOOL getAll = (lua_type(L, lua_gettop(L)) == LUA_TBOOLEAN) ?
-                          (BOOL)lua_toboolean(L, lua_gettop(L)) : NO ;
+    NSPasteboard* pb ;
+    BOOL getAll = NO ;
+
+    if (lua_gettop(L) >= 1 && lua_isboolean(L, -1)) {
+        getAll = (BOOL)lua_toboolean(L, -1) ;
+        lua_pop(L, 1) ;
+    }
+    if (lua_gettop(L) >= 1) {
+        if (lua_isboolean(L, 1))
+            return luaL_argerror(L, 1, "string or nil expected") ;
+        pb = lua_to_pasteboard(L, 1) ;
+    } else {
+        pb = [NSPasteboard generalPasteboard] ;
+    }
 
     NSArray *results = [pb readObjectsForClasses:@[[NSImage class]] options:@{}] ;
     if (results && ([results count] != 0)) {
@@ -443,13 +789,21 @@ static int readURLObjects(lua_State *L) {
     [skin checkArgs:LS_TNUMBER | LS_TSTRING | LS_TNIL | LS_TBOOLEAN | LS_TOPTIONAL,
                     LS_TBOOLEAN | LS_TOPTIONAL,
                     LS_TBREAK] ;
-    if ((lua_type(L, 1) == LUA_TBOOLEAN) && (lua_gettop(L) != 1))
-        return luaL_argerror(L, 1, "string or nil expected") ;
 
-    NSPasteboard* pb = (lua_type(L, 1) == LUA_TBOOLEAN) ?
-                          [NSPasteboard generalPasteboard] : lua_to_pasteboard(L, 1);
-    BOOL getAll = (lua_type(L, lua_gettop(L)) == LUA_TBOOLEAN) ?
-                          (BOOL)lua_toboolean(L, lua_gettop(L)) : NO ;
+    NSPasteboard* pb ;
+    BOOL getAll = NO ;
+
+    if (lua_gettop(L) >= 1 && lua_isboolean(L, -1)) {
+        getAll = (BOOL)lua_toboolean(L, -1) ;
+        lua_pop(L, 1) ;
+    }
+    if (lua_gettop(L) >= 1) {
+        if (lua_isboolean(L, 1))
+            return luaL_argerror(L, 1, "string or nil expected") ;
+        pb = lua_to_pasteboard(L, 1) ;
+    } else {
+        pb = [NSPasteboard generalPasteboard] ;
+    }
 
     NSArray *results = [pb readObjectsForClasses:@[[NSURL class]] options:@{}] ;
     if (results && ([results count] != 0)) {
@@ -479,13 +833,21 @@ static int readColorObjects(lua_State *L) {
     [skin checkArgs:LS_TNUMBER | LS_TSTRING | LS_TNIL | LS_TBOOLEAN | LS_TOPTIONAL,
                     LS_TBOOLEAN | LS_TOPTIONAL,
                     LS_TBREAK] ;
-    if ((lua_type(L, 1) == LUA_TBOOLEAN) && (lua_gettop(L) != 1))
-        return luaL_argerror(L, 1, "string or nil expected") ;
 
-    NSPasteboard* pb = (lua_type(L, 1) == LUA_TBOOLEAN) ?
-                          [NSPasteboard generalPasteboard] : lua_to_pasteboard(L, 1);
-    BOOL getAll = (lua_type(L, lua_gettop(L)) == LUA_TBOOLEAN) ?
-                          (BOOL)lua_toboolean(L, lua_gettop(L)) : NO ;
+    NSPasteboard* pb ;
+    BOOL getAll = NO ;
+
+    if (lua_gettop(L) >= 1 && lua_isboolean(L, -1)) {
+        getAll = (BOOL)lua_toboolean(L, -1) ;
+        lua_pop(L, 1) ;
+    }
+    if (lua_gettop(L) >= 1) {
+        if (lua_isboolean(L, 1))
+            return luaL_argerror(L, 1, "string or nil expected") ;
+        pb = lua_to_pasteboard(L, 1) ;
+    } else {
+        pb = [NSPasteboard generalPasteboard] ;
+    }
 
     NSArray *results = [pb readObjectsForClasses:@[[NSColor class]] options:@{}] ;
     if (results && ([results count] != 0)) {
@@ -682,6 +1044,15 @@ static const luaL_Reg pasteboardLib[] = {
     {"readURL",          readURLObjects},
     {"readColor",        readColorObjects},
     {"writeObjects",     writeObjects},
+
+    {"readDataForUTI",   readItemForType},
+    {"writeDataForUTI",  writeItemForType},
+
+    {"readPListForUTI",  readPropertyListForType},
+    {"writePListForUTI", writePropertyListForType},
+
+    {"readArchiverDataForUTI", readArchivedDataForType},
+    {"writeArchiverDataForUTI", writeArchivedDataForType},
 
     {NULL,      NULL}
 };

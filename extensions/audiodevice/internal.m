@@ -47,7 +47,36 @@ void watcherStop(audioDeviceUserData *audioDevice);
 #pragma mark - CoreAudio helper functions
 
 OSStatus audiodevice_callback(AudioDeviceID deviceID, UInt32 numAddresses, const AudioObjectPropertyAddress addressList[], void *clientData) {
-    dispatch_sync(dispatch_get_main_queue(), ^{
+    // Get the UID of the device, to pass into the callback
+    NSString *deviceUIDNS = nil;
+
+    AudioObjectPropertyAddress propertyAddress = {
+        kAudioDevicePropertyDeviceUID,
+        kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyElementMaster
+    };
+    CFStringRef deviceUID;
+    UInt32 propertySize = sizeof(CFStringRef);
+
+    OSStatus result;
+
+    result = AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, NULL, &propertySize, &deviceUID);
+    if (result == noErr) {
+        deviceUIDNS = (__bridge NSString *)deviceUID;
+    }
+
+    //NSLog(@"Found UID: %@", deviceUIDNS);
+
+    NSMutableArray *events = [[NSMutableArray alloc] init];
+
+    for (UInt32 i = 0; i < numAddresses; i++) {
+        NSString *mSelector = (__bridge_transfer NSString *)UTCreateStringForOSType(addressList[i].mSelector);
+        NSString *mScope = (__bridge_transfer NSString *)UTCreateStringForOSType(addressList[i].mScope);
+        NSNumber *mElement = [NSNumber numberWithInt:addressList[i].mElement];
+        [events addObject:@{@"mSelector":mSelector, @"mScope":mScope, @"mElement":mElement}];
+    }
+
+    dispatch_async(dispatch_get_main_queue(), ^{
         //NSLog(@"audiodevice_callback called with %i addresses", numAddresses);
 
         audioDeviceUserData *userData = (audioDeviceUserData *)clientData;
@@ -55,38 +84,21 @@ OSStatus audiodevice_callback(AudioDeviceID deviceID, UInt32 numAddresses, const
         if (userData->callback == LUA_NOREF) {
             [skin logError:@"hs.audiodevice.watcher callback fired, but no function has been set with hs.audiodevice.watcher.setCallback()"];
         } else {
-            // Get the UID of the device, to pass into the callback
-            NSString *deviceUIDNS = nil;
-
-            AudioObjectPropertyAddress propertyAddress = {
-                kAudioDevicePropertyDeviceUID,
-                kAudioObjectPropertyScopeGlobal,
-                kAudioObjectPropertyElementMaster
-            };
-            CFStringRef deviceUID;
-            UInt32 propertySize = sizeof(CFStringRef);
-
-            OSStatus result;
-
-            result = AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, NULL, &propertySize, &deviceUID);
-            if (result == noErr) {
-                deviceUIDNS = (__bridge NSString *)deviceUID;
-            }
-
-            //NSLog(@"Found UID: %@", deviceUIDNS);
-
-            for (UInt32 i = 0; i < numAddresses; i++) {
+            for (NSDictionary *event in events) {
                 [skin pushLuaRef:refTable ref:userData->callback];
+
                 if (deviceUIDNS) {
                     lua_pushstring(skin.L, deviceUIDNS.UTF8String);
                 } else {
                     lua_pushnil(skin.L);
                 }
-                lua_pushstring(skin.L, ((__bridge_transfer NSString *)UTCreateStringForOSType(addressList[i].mSelector)).UTF8String);
-                lua_pushstring(skin.L, ((__bridge_transfer NSString *)UTCreateStringForOSType(addressList[i].mScope)).UTF8String);
-                lua_pushinteger(skin.L, addressList[i].mElement);
+
+                [skin pushNSObject:event[@"mSelector"]];
+                [skin pushNSObject:event[@"mScope"]];
+                [skin pushNSObject:event[@"mElement"]];
+
                 if (![skin protectedCallAndTraceback:4 nresults:0]) {
-                    lua_pop(skin.L, 1) ; // remove error message
+                    lua_pop(skin.L, 1); // remove error message
                 }
             }
         }
@@ -426,6 +438,78 @@ static int audiodevice_uid(lua_State* L) {
     return 1;
 }
 
+/// hs.audiodevice:inputMuted() -> bool or nil
+/// Method
+/// Get the Input mutedness state of the audio device
+///
+/// Parameters:
+///  * None
+///
+/// Returns:
+///  * True if the audio device's Input is muted. False if it's not muted, nil if it does not support muting
+static int audiodevice_inputMuted(lua_State *L) {
+    LuaSkin *skin = [LuaSkin shared];
+    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TBREAK];
+
+    audioDeviceUserData *audioDevice = userdataToAudioDevice(L, 1);
+    AudioDeviceID deviceId = audioDevice->deviceId;
+    unsigned int scope;
+    UInt32 muted;
+    UInt32 mutedSize = sizeof(UInt32);
+
+    scope = kAudioObjectPropertyScopeInput;
+
+    AudioObjectPropertyAddress propertyAddress = {
+        kAudioDevicePropertyMute,
+        scope,
+        kAudioObjectPropertyElementMaster
+    };
+
+    if (AudioObjectHasProperty(deviceId, &propertyAddress) && (AudioObjectGetPropertyData(deviceId, &propertyAddress, 0, NULL, &mutedSize, &muted) == noErr)) {
+        lua_pushboolean(L, muted != 0);
+    } else {
+        lua_pushnil(L);
+    }
+    
+    return 1;
+}
+
+/// hs.audiodevice:outputMuted() -> bool or nil
+/// Method
+/// Get the Output mutedness state of the audio device
+///
+/// Parameters:
+///  * None
+///
+/// Returns:
+///  * True if the audio device's Output is muted. False if it's not muted, nil if it does not support muting
+static int audiodevice_outputMuted(lua_State *L) {
+    LuaSkin *skin = [LuaSkin shared];
+    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TBREAK];
+
+    audioDeviceUserData *audioDevice = userdataToAudioDevice(L, 1);
+    AudioDeviceID deviceId = audioDevice->deviceId;
+    unsigned int scope;
+    UInt32 muted;
+    UInt32 mutedSize = sizeof(UInt32);
+
+    scope = kAudioObjectPropertyScopeOutput;
+
+    AudioObjectPropertyAddress propertyAddress = {
+        kAudioDevicePropertyMute,
+        scope,
+        kAudioObjectPropertyElementMaster
+    };
+
+    if (AudioObjectHasProperty(deviceId, &propertyAddress) && (AudioObjectGetPropertyData(deviceId, &propertyAddress, 0, NULL, &mutedSize, &muted) == noErr)) {
+        lua_pushboolean(L, muted != 0);
+    } else {
+        lua_pushnil(L);
+    }
+
+    return 1;
+}
+
 /// hs.audiodevice:muted() -> bool or nil
 /// Method
 /// Get the mutedness state of the audio device
@@ -435,6 +519,9 @@ static int audiodevice_uid(lua_State* L) {
 ///
 /// Returns:
 ///  * True if the audio device is muted, False if it is not muted, nil if it does not support muting
+///
+/// Notes:
+///  * If a device is capable of both input and output, this method will prefer the output. See `:inputMuted()` and `:outputMuted()` for specific variants.
 static int audiodevice_muted(lua_State* L) {
     LuaSkin *skin = [LuaSkin shared];
     [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TBREAK];
@@ -466,6 +553,79 @@ static int audiodevice_muted(lua_State* L) {
     return 1;
 }
 
+/// hs.audiodevice:setInputMuted(state) -> bool
+/// Method
+/// Set the mutedness state of the Input of the audio device
+///
+/// Parameters:
+///  * state - A boolean value. True to mute the device, False to unmute it
+///
+/// Returns:
+///  * True if the device's Input mutedness state was set, or False if it does not support muting
+static int audiodevice_setInputMuted(lua_State* L) {
+    LuaSkin *skin = [LuaSkin shared];
+    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TBOOLEAN, LS_TBREAK];
+
+    audioDeviceUserData *audioDevice = userdataToAudioDevice(L, 1);
+    AudioDeviceID deviceId = audioDevice->deviceId;
+    unsigned int scope;
+    UInt32 muted = lua_toboolean(L, 2);
+    UInt32 mutedSize = sizeof(UInt32);
+
+    scope = kAudioObjectPropertyScopeInput;
+
+    AudioObjectPropertyAddress propertyAddress = {
+        kAudioDevicePropertyMute,
+        scope,
+        kAudioObjectPropertyElementMaster
+    };
+
+    if (AudioObjectHasProperty(deviceId, &propertyAddress) && (AudioObjectSetPropertyData(deviceId, &propertyAddress, 0, NULL, mutedSize, &muted) == noErr)) {
+        lua_pushboolean(L, TRUE);
+    } else {
+        lua_pushboolean(L, FALSE);
+    }
+
+    return 1;
+}
+
+/// hs.audiodevice:setOutputMuted(state) -> bool
+/// Method
+/// Set the mutedness state of the Output of the audio device
+///
+/// Parameters:
+///  * state - A boolean value. True to mute the device, False to unmute it
+///
+/// Returns:
+///  * True if the device's Output mutedness state was set, or False if it does not support muting
+static int audiodevice_setOutputMuted(lua_State* L) {
+    LuaSkin *skin = [LuaSkin shared];
+    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TBOOLEAN, LS_TBREAK];
+
+    audioDeviceUserData *audioDevice = userdataToAudioDevice(L, 1);
+    AudioDeviceID deviceId = audioDevice->deviceId;
+    unsigned int scope;
+    UInt32 muted = lua_toboolean(L, 2);
+    UInt32 mutedSize = sizeof(UInt32);
+
+    scope = kAudioObjectPropertyScopeOutput;
+
+    AudioObjectPropertyAddress propertyAddress = {
+        kAudioDevicePropertyMute,
+        scope,
+        kAudioObjectPropertyElementMaster
+    };
+
+    if (AudioObjectHasProperty(deviceId, &propertyAddress) && (AudioObjectSetPropertyData(deviceId, &propertyAddress, 0, NULL, mutedSize, &muted) == noErr)) {
+        lua_pushboolean(L, TRUE);
+    } else {
+        lua_pushboolean(L, FALSE);
+    }
+
+    return 1;
+}
+
+
 /// hs.audiodevice:setMuted(state) -> bool
 /// Method
 /// Set the mutedness state of the audio device
@@ -475,6 +635,9 @@ static int audiodevice_muted(lua_State* L) {
 ///
 /// Returns:
 ///  * True if the device's mutedness state was set, or False if it does not support muting
+///
+/// Notes:
+///  * If a device is capable of both input and output, this method will prefer the output. See `:inputSetMuted()` and `:outputSetMuted()` for specific variants.
 static int audiodevice_setmuted(lua_State* L) {
     LuaSkin *skin = [LuaSkin shared];
     [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TBOOLEAN, LS_TBREAK];
@@ -497,7 +660,7 @@ static int audiodevice_setmuted(lua_State* L) {
         kAudioObjectPropertyElementMaster
     };
 
-    if (AudioObjectHasProperty(deviceId, &propertyAddress) && (AudioObjectSetPropertyData(deviceId, &propertyAddress, 0, NULL, mutedSize, &muted) != noErr)) {
+    if (AudioObjectHasProperty(deviceId, &propertyAddress) && (AudioObjectSetPropertyData(deviceId, &propertyAddress, 0, NULL, mutedSize, &muted) == noErr)) {
         lua_pushboolean(L, TRUE);
     } else {
         lua_pushboolean(L, FALSE);
@@ -1515,7 +1678,11 @@ static const luaL_Reg audiodevice_metalib[] = {
     {"setInputVolume",          audiodevice_setInputVolume},
     {"setOutputVolume",         audiodevice_setOutputVolume},
     {"muted",                   audiodevice_muted},
+    {"inputMuted",              audiodevice_inputMuted},
+    {"outputMuted",             audiodevice_outputMuted},
     {"setMuted",                audiodevice_setmuted},
+    {"setInputMuted",           audiodevice_setInputMuted},
+    {"setOutputMuted",          audiodevice_setOutputMuted},
     {"transportType",           audiodevice_transportType},
     {"jackConnected",           audiodevice_jackConnected},
     {"supportsInputDataSources",audiodevice_supportsInputDataSources},

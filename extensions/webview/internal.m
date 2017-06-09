@@ -11,6 +11,13 @@
 static int           refTable ;
 static WKProcessPool *HSWebViewProcessPool ;
 
+static inline NSRect RectWithFlippedYCoordinate(NSRect theRect) {
+    return NSMakeRect(theRect.origin.x,
+                      [[NSScreen screens][0] frame].size.height - theRect.origin.y - theRect.size.height,
+                      theRect.size.width,
+                      theRect.size.height) ;
+}
+
 #pragma mark - Classes and Delegates
 
 // forward declare so we can use in class definitions
@@ -21,10 +28,19 @@ static int SecCertificateRef_toLua(lua_State *L, SecCertificateRef certRef) ;
 #pragma mark - our window object
 
 @implementation HSWebViewWindow
+// Apple's stupid API change gave this an enum name (finally) in 10.12, but clang complains about using the underlying
+// type directly, which we have to do to maintain Xcode 7 compilability, so to keep Xcode 8 quite... this:
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Woverriding-method-mismatch"
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wmismatched-parameter-types"
 - (id)initWithContentRect:(NSRect)contentRect
                 styleMask:(NSUInteger)windowStyle
                   backing:(NSBackingStoreType)bufferingType
-                    defer:(BOOL)deferCreation {
+                    defer:(BOOL)deferCreation
+#pragma clang diagnostic pop
+#pragma clang diagnostic pop
+{
 
     self = [super initWithContentRect:contentRect
                             styleMask:windowStyle
@@ -32,8 +48,7 @@ static int SecCertificateRef_toLua(lua_State *L, SecCertificateRef certRef) ;
                                 defer:deferCreation];
 
     if (self) {
-        self.delegate           = self;
-        contentRect.origin.y=[[NSScreen screens][0] frame].size.height - contentRect.origin.y - contentRect.size.height;
+        contentRect = RectWithFlippedYCoordinate(contentRect) ;
         [self setFrameOrigin:contentRect.origin];
 
         // Configure the window
@@ -42,52 +57,118 @@ static int SecCertificateRef_toLua(lua_State *L, SecCertificateRef certRef) ;
         self.opaque             = YES;
         self.hasShadow          = NO;
         self.ignoresMouseEvents = NO;
-        self.allowKeyboardEntry = NO;
         self.restorable         = NO;
         self.hidesOnDeactivate  = NO;
-        self.closeOnEscape      = NO;
         self.animationBehavior  = NSWindowAnimationBehaviorNone;
         self.level              = NSNormalWindowLevel;
 
-        self.parent             = nil ;
-        self.children           = [[NSMutableArray alloc] init] ;
-        self.udRef              = LUA_NOREF ;
-        self.titleFollow        = YES ;
-        self.deleteOnClose      = NO ;
+        _parent             = nil ;
+        _children           = [[NSMutableArray alloc] init] ;
+        _udRef              = LUA_NOREF ;
+        _windowCallback     = LUA_NOREF ;
+        _titleFollow        = YES ;
+        _deleteOnClose      = NO ;
+        _allowKeyboardEntry = NO;
+        _closeOnEscape      = NO;
+
+        // can't be set before the callback which acts on delegate methods is defined
+        self.delegate       = self;
     }
     return self;
 }
 
 - (BOOL)canBecomeKeyWindow {
-    return self.allowKeyboardEntry ;
+    return _allowKeyboardEntry ;
 }
 
 - (BOOL)windowShouldClose:(id __unused)sender {
     if ((self.styleMask & NSClosableWindowMask) != 0) {
-        if (self.deleteOnClose) {
-            LuaSkin *skin = [LuaSkin shared] ;
-            lua_pushcfunction([skin L], userdata_gc) ;
-            [skin pushNSObject:self] ;
-            if (![skin protectedCallAndTraceback:1 nresults:0]) {
-                // error message is argument to next call, so no pop needed
-                lua_getglobal([skin L], "print") ;
-                lua_insert([skin L], -2) ;
-                lua_pushstring([skin L], "deleteOnClose:") ;
-                lua_insert([skin L], -2) ;
-                if (![skin protectedCallAndTraceback:2 nresults:0]) {
-                    lua_pop(skin.L, 1) ; // remove error message
-                }
-                NSLog(@"webview deleteOnClose: %s", lua_tostring([skin L], -1)) ;
-            }
-        }
         return YES ;
     } else {
         return NO ;
     }
 }
 
+- (void)windowWillClose:(__unused NSNotification *)notification {
+    LuaSkin *skin = [LuaSkin shared] ;
+    lua_State *L = [skin L] ;
+    if (_windowCallback != LUA_NOREF) {
+        [skin pushLuaRef:refTable ref:_windowCallback] ;
+        [skin pushNSObject:@"closing"] ;
+        [skin pushNSObject:self] ;
+        if (![skin  protectedCallAndTraceback:2 nresults:0]) {
+            [skin logError:[NSString stringWithFormat:@"%s:windowCallback callback error: %s", USERDATA_TAG, lua_tostring(L, -1)]];
+            lua_pop(L, 1) ;
+        }
+    }
+    if (_deleteOnClose) {
+        lua_pushcfunction(L, userdata_gc) ;
+        [skin pushNSObject:self] ;
+        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+            [skin logError:[NSString stringWithFormat:@"%s:error invoking _gc for deleteOnClose:%s", USERDATA_TAG, lua_tostring(L, -1)]] ;
+            lua_pop(L, 1) ;
+        }
+    }
+}
+
+- (void)windowDidBecomeKey:(__unused NSNotification *)notification {
+    if (_windowCallback != LUA_NOREF) {
+        LuaSkin *skin = [LuaSkin shared] ;
+        [skin pushLuaRef:refTable ref:_windowCallback] ;
+        [skin pushNSObject:@"focusChange"] ;
+        [skin pushNSObject:self] ;
+        lua_pushboolean(skin.L, YES) ;
+        if (![skin  protectedCallAndTraceback:3 nresults:0]) {
+            [skin logError:[NSString stringWithFormat:@"hs.webview:windowCallback callback error: %s", lua_tostring(skin.L, -1)]];
+            lua_pop(skin.L, 1) ;
+        }
+    }
+}
+
+- (void)windowDidResignKey:(__unused NSNotification *)notification {
+    if (_windowCallback != LUA_NOREF) {
+        LuaSkin *skin = [LuaSkin shared] ;
+        [skin pushLuaRef:refTable ref:_windowCallback] ;
+        [skin pushNSObject:@"focusChange"] ;
+        [skin pushNSObject:self] ;
+        lua_pushboolean(skin.L, NO) ;
+        if (![skin  protectedCallAndTraceback:3 nresults:0]) {
+            [skin logError:[NSString stringWithFormat:@"hs.webview:windowCallback callback error: %s", lua_tostring(skin.L, -1)]];
+            lua_pop(skin.L, 1) ;
+        }
+    }
+}
+
+- (void)windowDidResize:(__unused NSNotification *)notification {
+    if (_windowCallback != LUA_NOREF) {
+        LuaSkin *skin = [LuaSkin shared] ;
+        [skin pushLuaRef:refTable ref:_windowCallback] ;
+        [skin pushNSObject:@"frameChange"] ;
+        [skin pushNSObject:self] ;
+        [skin pushNSRect:RectWithFlippedYCoordinate(self.frame)] ;
+        if (![skin  protectedCallAndTraceback:3 nresults:0]) {
+            [skin logError:[NSString stringWithFormat:@"hs.webview:windowCallback callback error: %s", lua_tostring(skin.L, -1)]];
+            lua_pop(skin.L, 1) ;
+        }
+    }
+}
+
+- (void)windowDidMove:(__unused NSNotification *)notification {
+    if (_windowCallback != LUA_NOREF) {
+        LuaSkin *skin = [LuaSkin shared] ;
+        [skin pushLuaRef:refTable ref:_windowCallback] ;
+        [skin pushNSObject:@"frameChange"] ;
+        [skin pushNSObject:self] ;
+        [skin pushNSRect:RectWithFlippedYCoordinate(self.frame)] ;
+        if (![skin  protectedCallAndTraceback:3 nresults:0]) {
+            [skin logError:[NSString stringWithFormat:@"hs.webview:windowCallback callback error: %s", lua_tostring(skin.L, -1)]];
+            lua_pop(skin.L, 1) ;
+        }
+    }
+}
+
 - (void)cancelOperation:(id)sender {
-    if (self.closeOnEscape)
+    if (_closeOnEscape)
         [super cancelOperation:sender] ;
 }
 
@@ -115,12 +196,12 @@ static int SecCertificateRef_toLua(lua_State *L, SecCertificateRef certRef) ;
               if (deleteWindow) {
               LuaSkin *skin = [LuaSkin shared] ;
                   lua_State *L = [skin L] ;
+                  [mySelf close] ; // trigger callback, if set, then cleanup
                   lua_pushcfunction(L, userdata_gc) ;
                   [skin pushLuaRef:refTable ref:mySelf.udRef] ;
                   if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
                       [skin logBreadcrumb:[NSString stringWithFormat:@"%s:error invoking _gc for delete (with fade) method:%s", USERDATA_TAG, lua_tostring(L, -1)]] ;
                       lua_pop(L, 1) ;
-                      [mySelf close] ;  // the least we can do is close the webview if an error occurs with __gc
                   }
               } else {
                   [mySelf orderOut:nil];
@@ -419,9 +500,9 @@ static int SecCertificateRef_toLua(lua_State *L, SecCertificateRef certRef) ;
         HSWebViewWindow *parent = (HSWebViewWindow *)theView.window ;
         NSRect theRect = [parent contentRectForFrameRect:parent.frame] ;
 
-        theRect.origin.x = theRect.origin.x + 20 ;
         // correct for flipped origin in HS
-        theRect.origin.y = [[NSScreen screens][0] frame].size.height - theRect.origin.y - theRect.size.height ;
+        theRect = RectWithFlippedYCoordinate(theRect) ;
+        theRect.origin.x = theRect.origin.x + 20 ;
         theRect.origin.y = theRect.origin.y + 20 ;
 
         HSWebViewWindow *newWindow = [[HSWebViewWindow alloc] initWithContentRect:theRect
@@ -434,6 +515,11 @@ static int SecCertificateRef_toLua(lua_State *L, SecCertificateRef certRef) ;
         newWindow.parent             = parent ;
         newWindow.deleteOnClose      = YES ;
         newWindow.opaque             = parent.opaque ;
+
+        if (((HSWebViewWindow *)theView.window).windowCallback != LUA_NOREF) {
+            [skin pushLuaRef:refTable ref:((HSWebViewWindow *)theView.window).windowCallback];
+            newWindow.windowCallback = [skin luaRef:refTable] ;
+        }
 
         HSWebViewView *newView = [[HSWebViewView alloc] initWithFrame:((NSView *)newWindow.contentView).bounds
                                                         configuration:configuration];
@@ -680,7 +766,10 @@ static int webview_privateBrowsing(lua_State *L) {
     if (NSClassFromString(@"WKWebsiteDataStore")) {
         HSWebViewView          *theView = theWindow.contentView ;
         WKWebViewConfiguration *theConfiguration = [theView configuration] ;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpartial-availability"
         lua_pushboolean(L, !theConfiguration.websiteDataStore.persistent) ;
+#pragma clang diagnostic push
     } else {
         [skin logInfo:[NSString stringWithFormat:@"%s:private browsing requires OS X 10.11 and newer", USERDATA_TAG]] ;
         lua_pushnil(L) ;
@@ -768,10 +857,9 @@ static int webview_parent(lua_State *L) {
 ///      * `Content-Length`
 ///
 /// Returns:
-///  * If a URL is specified, then this method returns the webview Object and a navigation identifier; otherwise it returns the current url being displayed.
+///  * If a URL is specified, then this method returns the webview Object; otherwise it returns the current url being displayed.
 ///
 /// Notes:
-///  * The navigation identifier can be used to track a web request as it is processed and loaded by using the `hs.webview:navigationCallback` method.
 ///  * The networkServiceType field of the URL request table is a hint to the operating system about what the underlying traffic is used for. This hint enhances the system's ability to prioritize traffic, determine how quickly it needs to wake up the Wi-Fi radio, and so on. By providing accurate information, you improve the ability of the system to optimally balance battery life, performance, and other considerations.  Likewise, inaccurate information can have a deleterious effect on your system performance and battery life.
 static int webview_url(lua_State *L) {
     LuaSkin *skin = [LuaSkin shared] ;
@@ -780,16 +868,19 @@ static int webview_url(lua_State *L) {
     HSWebViewView   *theView = theWindow.contentView ;
 
     if (lua_type(L, 2) == LUA_TNONE) {
-        [skin pushNSObject:[theView URL]] ;
+        [skin pushNSObject:[[theView URL] absoluteString]] ;
         return 1 ;
     } else {
         NSURLRequest *theNSURL = [skin luaObjectAtIndex:2 toClass:"NSURLRequest"] ;
         if (theNSURL) {
-            WKNavigation *navID = [theView loadRequest:theNSURL] ;
-            theView.trackingID = navID ;
+            if (theView.loading) [theView stopLoading] ;
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+                while (theView.loading) {}
+                WKNavigation *navID = [theView loadRequest:theNSURL] ;
+                theView.trackingID = navID ;
+            }) ;
             lua_pushvalue(L, 1) ;
-            [skin pushNSObject:navID] ;
-            return 2 ;
+            return 1 ;
         } else {
             return luaL_error(L, "Invalid URL type.  String or table expected.") ;
         }
@@ -824,10 +915,13 @@ static int webview_userAgent(lua_State *L) {
 
     if ([theView respondsToSelector:NSSelectorFromString(@"customUserAgent")]) {
         if (lua_type(L, 2) == LUA_TNONE) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpartial-availability"
             [skin pushNSObject:theView.customUserAgent] ;
         } else {
     //         NSString *userAgent = [skin toNSObjectAtIndex:2] ;
             theView.customUserAgent = [skin toNSObjectAtIndex:2] ;
+#pragma clang diagnostic push
             lua_pushvalue(L, 1) ;
         }
     } else {
@@ -867,10 +961,13 @@ static int webview_certificateChain(lua_State *L) {
 
     if ([theView respondsToSelector:NSSelectorFromString(@"certificateChain")]) {
         lua_newtable(L) ;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpartial-availability"
         for (id certificate in theView.certificateChain) {
             SecCertificateRef_toLua(L, (__bridge SecCertificateRef)certificate) ;
             lua_rawseti(L, -2, luaL_len(L, -2) + 1) ;
         }
+#pragma clang diagnostic push
     } else {
         [skin logInfo:[NSString stringWithFormat:@"%s:certificateChain requires OS X 10.11 and newer", USERDATA_TAG]] ;
         lua_pushnil(L) ;
@@ -1048,27 +1145,25 @@ static int webview_goBack(lua_State *L) {
 ///  * `validate` - an optional boolean indicating whether or not an attempt to perform end-to-end revalidation of cached data should be performed.  Defaults to false.
 ///
 /// Returns:
-///  * The webview Object and a navigation identifier
-///
-/// Notes:
-///  * The navigation identifier can be used to track a web request as it is processed and loaded by using the `hs.webview:navigationCallback` method.
+///  * The webview Object
 static int webview_reload(lua_State *L) {
     LuaSkin *skin = [LuaSkin shared] ;
     [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TBOOLEAN | LS_TOPTIONAL, LS_TBREAK] ;
     HSWebViewWindow *theWindow = get_objectFromUserdata(__bridge HSWebViewWindow, L, 1, USERDATA_TAG) ;
     HSWebViewView   *theView = theWindow.contentView ;
 
-    WKNavigation *navID ;
-    if (lua_type(L, 2) == LUA_TBOOLEAN && lua_toboolean(L, 2))
-        navID = [theView reload] ;
-    else
-        navID = [theView reloadFromOrigin] ;
-
-    theView.trackingID = navID ;
-
+    if (theView.loading) [theView stopLoading] ;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        while (theView.loading) {}
+        WKNavigation *navID ;
+        if (lua_type(L, 2) == LUA_TBOOLEAN && lua_toboolean(L, 2))
+            navID = [theView reload] ;
+        else
+            navID = [theView reloadFromOrigin] ;
+        theView.trackingID = navID ;
+    }) ;
     lua_pushvalue(L, 1) ;
-    [skin pushNSObject:navID] ;
-    return 2 ;
+    return 1 ;
 }
 
 /// hs.webview:transparent([value]) -> webviewObject | current value
@@ -1256,11 +1351,10 @@ static int webview_magnification(lua_State *L) {
 ///  * `baseURL` - an optional Base URL to use as the starting point for any relative links within the provided html.
 ///
 /// Returns:
-///  * The webview Object and a navigation identifier
+///  * The webview Object
 ///
 /// Notes:
 ///  * Web Pages generated in this manner are not added to the webview history list
-///  * The navigation identifier can be used to track a web request as it is processed and loaded by using the `hs.webview:navigationCallback` method.
 static int webview_html(lua_State *L) {
     LuaSkin *skin = [LuaSkin shared] ;
     [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TSTRING, LS_TSTRING | LS_TOPTIONAL, LS_TBREAK] ;
@@ -1274,12 +1368,14 @@ static int webview_html(lua_State *L) {
 
     NSString *theBaseURL = (lua_type(L, 3) == LUA_TSTRING) ? [skin toNSObjectAtIndex:3] : nil ;
 
-    WKNavigation *navID = [theView loadHTMLString:theHTML baseURL:[NSURL URLWithString:theBaseURL]] ;
-    theView.trackingID = navID ;
-
+    if (theView.loading) [theView stopLoading] ;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        while (theView.loading) {}
+        WKNavigation *navID = [theView loadHTMLString:theHTML baseURL:[NSURL URLWithString:theBaseURL]] ;
+        theView.trackingID = navID ;
+    }) ;
     lua_pushvalue(L, 1) ;
-    [skin pushNSObject:navID] ;
-    return 2 ;
+    return 1 ;
 }
 
 /// hs.webview:navigationCallback(fn) -> webviewObject
@@ -1514,7 +1610,7 @@ static int webview_historyList(lua_State *L) {
 ///
 /// Parameters:
 ///  * `script` - the JavaScript to execute within the context of the current webview's display
-///  * `callback` - an optional function which should accept two parameters as the result of the executed JavaScript.  The function paramaters are as follows:
+///  * `callback` - an optional function which should accept two parameters as the result of the executed JavaScript.  The function parameters are as follows:
 ///    * `result` - the result of the executed JavaScript code or nil if there was no result or an error occurred.
 ///    * `error`  - an NSError table describing any error that occurred during the JavaScript execution or nil if no error occurred.
 ///
@@ -1542,15 +1638,16 @@ static int webview_evaluateJavaScript(lua_State *L) {
               completionHandler:^(id obj, NSError *error){
 
         if (callbackRef != LUA_NOREF) {
-            [skin pushLuaRef:refTable ref:callbackRef] ;
-            [skin pushNSObject:obj] ;
-            NSError_toLua(L, error) ;
-            if (![skin protectedCallAndTraceback:2 nresults:0]) {
-                const char *errorMsg = lua_tostring([skin L], -1);
-                lua_pop([skin L], 1) ;
-                [skin logError:[NSString stringWithFormat:@"hs.webview:evaluateJavaScript() callback error: %s", errorMsg]];
+            LuaSkin *blockSkin = [LuaSkin shared] ;
+            [blockSkin pushLuaRef:refTable ref:callbackRef] ;
+            [blockSkin pushNSObject:obj] ;
+            NSError_toLua([blockSkin L], error) ;
+            if (![blockSkin protectedCallAndTraceback:2 nresults:0]) {
+                const char *errorMsg = lua_tostring([blockSkin L], -1);
+                lua_pop([blockSkin L], 1) ;
+                [blockSkin logError:[NSString stringWithFormat:@"hs.webview:evaluateJavaScript() callback error: %s", errorMsg]];
             }
-            [skin luaUnref:refTable ref:callbackRef] ;
+            [blockSkin luaUnref:refTable ref:callbackRef] ;
         }
     }] ;
 
@@ -1559,6 +1656,71 @@ static int webview_evaluateJavaScript(lua_State *L) {
 }
 
 #pragma mark - Window Related Methods
+
+/// hs.webview:topLeft([point]) -> webviewObject | currentValue
+/// Method
+/// Get or set the top-left coordinate of the webview window
+///
+/// Parameters:
+///  * `point` - An optional point-table specifying the new coordinate the top-left of the webview window should be moved to
+///
+/// Returns:
+///  * If an argument is provided, the webview object; otherwise the current value.
+///
+/// Notes:
+///  * a point-table is a table with key-value pairs specifying the new top-left coordinate on the screen of the webview (keys `x`  and `y`). The table may be crafted by any method which includes these keys, including the use of an `hs.geometry` object.
+static int webview_topLeft(lua_State *L) {
+    LuaSkin *skin = [LuaSkin shared];
+    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG,
+                    LS_TTABLE | LS_TOPTIONAL,
+                    LS_TBREAK] ;
+
+    HSWebViewWindow *theWindow = get_objectFromUserdata(__bridge HSWebViewWindow, L, 1, USERDATA_TAG) ;
+    NSRect oldFrame = RectWithFlippedYCoordinate(theWindow.frame);
+
+    if (lua_gettop(L) == 1) {
+        [skin pushNSPoint:oldFrame.origin] ;
+    } else {
+        NSPoint newCoord = [skin tableToPointAtIndex:2] ;
+        NSRect  newFrame = RectWithFlippedYCoordinate(NSMakeRect(newCoord.x, newCoord.y, oldFrame.size.width, oldFrame.size.height)) ;
+        [theWindow setFrame:newFrame display:YES animate:NO];
+        lua_pushvalue(L, 1);
+    }
+    return 1;
+}
+
+/// hs.webview:size([size]) -> webviewObject | currentValue
+/// Method
+/// Get or set the size of a webview window
+///
+/// Parameters:
+///  * `size` - An optional size-table specifying the width and height the webview window should be resized to
+///
+/// Returns:
+///  * If an argument is provided, the webview object; otherwise the current value.
+///
+/// Notes:
+///  * a size-table is a table with key-value pairs specifying the size (keys `h` and `w`) the webview should be resized to. The table may be crafted by any method which includes these keys, including the use of an `hs.geometry` object.
+static int webview_size(lua_State *L) {
+    LuaSkin *skin = [LuaSkin shared];
+    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG,
+                    LS_TTABLE | LS_TOPTIONAL,
+                    LS_TBREAK] ;
+
+    HSWebViewWindow *theWindow = get_objectFromUserdata(__bridge HSWebViewWindow, L, 1, USERDATA_TAG) ;
+
+    NSRect oldFrame = theWindow.frame;
+
+    if (lua_gettop(L) == 1) {
+        [skin pushNSSize:oldFrame.size] ;
+    } else {
+        NSSize newSize  = [skin tableToSizeAtIndex:2] ;
+        NSRect newFrame = NSMakeRect(oldFrame.origin.x, oldFrame.origin.y + oldFrame.size.height - newSize.height, newSize.width, newSize.height);
+        [theWindow setFrame:newFrame display:YES animate:NO];
+        lua_pushvalue(L, 1);
+    }
+    return 1;
+}
 
 /// hs.webview.new(rect, [preferencesTable], [userContentController]) -> webviewObject
 /// Constructor
@@ -1633,7 +1795,10 @@ static int webview_new(lua_State *L) {
             if ((lua_getfield(L, 2, "datastore") == LUA_TUSERDATA) && luaL_testudata(L, -1, "hs.webview.datastore")) {
                 // this type of userdata is impossible to create if you're not on 10.11, so this is highly unlikely, but...
                 if ([config respondsToSelector:NSSelectorFromString(@"setWebsiteDataStore:")]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpartial-availability"
                     config.websiteDataStore = [skin toNSObjectAtIndex:-1] ;
+#pragma clang diagnostic push
                 } else {
                     [skin logError:[NSString stringWithFormat:@"%s:setting a datastore requires OS X 10.11 or newer", USERDATA_TAG]] ;
                 }
@@ -1643,7 +1808,10 @@ static int webview_new(lua_State *L) {
             // the privateBrowsing flag should override setting a datastore; you actually shouldn't specify both
             if ((lua_getfield(L, 2, "privateBrowsing") == LUA_TBOOLEAN) && lua_toboolean(L, -1)) {
                 if ([config respondsToSelector:NSSelectorFromString(@"setWebsiteDataStore:")]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpartial-availability"
                     config.websiteDataStore = [WKWebsiteDataStore nonPersistentDataStore] ;
+#pragma clang diagnostic push
                 } else {
                     [skin logError:[NSString stringWithFormat:@"%s:private mode browsing requires OS X 10.11 or newer", USERDATA_TAG]] ;
                 }
@@ -1652,7 +1820,10 @@ static int webview_new(lua_State *L) {
 
             if (lua_getfield(L, 2, "applicationName") == LUA_TSTRING) {
                 if ([config respondsToSelector:NSSelectorFromString(@"applicationNameForUserAgent")]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpartial-availability"
                     config.applicationNameForUserAgent = [skin toNSObjectAtIndex:-1] ;
+#pragma clang diagnostic push
                 } else {
                     [skin logError:[NSString stringWithFormat:@"%s:setting the user agent application name requires OS X 10.11 or newer", USERDATA_TAG]] ;
                 }
@@ -1662,7 +1833,10 @@ static int webview_new(lua_State *L) {
 // Seems to be being ignored, will dig deeper if interest peaks or I have time
             if (lua_getfield(L, 2, "allowsAirPlay") == LUA_TBOOLEAN) {
                 if ([config respondsToSelector:NSSelectorFromString(@"setAllowsAirPlayForMediaPlayback:")]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpartial-availability"
                     config.allowsAirPlayForMediaPlayback = (BOOL)lua_toboolean(L, -1) ;
+#pragma clang diagnostic push
                 } else {
                     [skin logError:[NSString stringWithFormat:@"%s:setting allowsAirPlay requires OS X 10.11 or newer", USERDATA_TAG]] ;
                 }
@@ -2004,6 +2178,29 @@ static int webview_alpha(lua_State *L) {
     return 1 ;
 }
 
+/// hs.webview:shadow([value]) -> webviewObject | current value
+/// Method
+/// Get or set whether or not the webview window has shadows. Default to false.
+///
+/// Parameters:
+///  * `value` - an optional boolean value indicating whether or not the webview should have shadows.
+///
+/// Returns:
+///  * If a value is provided, then this method returns the webview object; otherwise the current value
+static int webview_shadow(lua_State *L) {
+    LuaSkin *skin = [LuaSkin shared] ;
+    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TBOOLEAN | LS_TOPTIONAL, LS_TBREAK] ;
+    HSWebViewWindow *theWindow = get_objectFromUserdata(__bridge HSWebViewWindow, L, 1, USERDATA_TAG) ;
+
+    if (lua_type(L, 2) == LUA_TNONE) {
+        lua_pushboolean(L, theWindow.hasShadow);
+    } else {
+        theWindow.hasShadow = (BOOL)lua_toboolean(L, 2);
+        lua_settop(L, 1);
+    }
+    return 1 ;
+}
+
 static int webview_orderHelper(lua_State *L, NSWindowOrderingMode mode) {
     LuaSkin *skin = [LuaSkin shared];
     [skin checkArgs:LS_TUSERDATA, USERDATA_TAG,
@@ -2066,12 +2263,12 @@ static int webview_delete(lua_State *L) {
 
     HSWebViewWindow *theWindow = [skin luaObjectAtIndex:1 toClass:"HSWebViewWindow"] ;
     if ((lua_gettop(L) == 1) || (![theWindow isVisible])) {
+        [theWindow close] ; // trigger callback, if set, then cleanup
         lua_pushcfunction(L, userdata_gc) ;
         lua_pushvalue(L, 1) ;
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
             [skin logBreadcrumb:[NSString stringWithFormat:@"%s:error invoking _gc for delete method:%s", USERDATA_TAG, lua_tostring(L, -1)]] ;
             lua_pop(L, 1) ;
-            [theWindow close] ; // the least we can do is close the webview if an error occurs with __gc
         }
     } else {
         [theWindow fadeOut:lua_tonumber(L, 2) andDelete:YES];
@@ -2120,6 +2317,49 @@ static int webview_behavior(lua_State *L) {
     }
 
     return 1 ;
+}
+
+/// hs.webview:windowCallback(fn) -> webviewObject
+/// Method
+/// Set or clear a callback for updates to the webview window
+///
+/// Parameters:
+///  * `fn` - the function to be called when the webview window is moved or closed. Specify an explicit nil to clear the current callback.  The function should expect 2 or 3 arguments and return none.  The arguments will be one of the following:
+///
+///    * "closing", webview - specifies that the webview window is being closed, either by the user or with the [hs.webview:delete](#delete) method.
+///      * `action`  - in this case "closing", specifying that the webview window is being closed
+///      * `webview` - the webview that is being closed
+///
+///    * "focusChange", webview, state - indicates that the webview window has either become or stopped being the focused window
+///      * `action`  - in this case "focusChange", specifying that the webview window is being closed
+///      * `webview` - the webview that is being closed
+///      * `state`   - a boolean, true if the webview has become the focused window, or false if it has lost focus
+///
+///    * "frameChange", webview, frame - indicates that the webview window has been moved or resized
+///      * `action`  - in this case "focusChange", specifying that the webview window is being closed
+///      * `webview` - the webview that is being closed
+///      * `frame`   - a rect-table containing the new co-ordinates and size of the webview window
+///
+/// Returns:
+///  * The webview object
+static int webview_windowCallback(lua_State *L) {
+    LuaSkin *skin = [LuaSkin shared] ;
+    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG,
+                    LS_TFUNCTION | LS_TNIL,
+                    LS_TBREAK] ;
+
+    HSWebViewWindow *theWindow = get_objectFromUserdata(__bridge HSWebViewWindow, L, 1, USERDATA_TAG) ;
+
+    // We're either removing a callback, or setting a new one. Either way, we want to clear out any callback that exists
+    theWindow.windowCallback = [skin luaUnref:refTable ref:theWindow.windowCallback] ;
+
+    if (lua_type(L, 2) == LUA_TFUNCTION) {
+        lua_pushvalue(L, 2);
+        theWindow.windowCallback = [skin luaRef:refTable] ;
+    }
+
+    lua_pushvalue(L, 1);
+    return 1;
 }
 
 #pragma mark - Module Constants
@@ -2381,7 +2621,10 @@ static int WKFrameInfo_toLua(lua_State *L, id obj) {
     lua_pushboolean(L, frameInfo.mainFrame) ; lua_setfield(L, -2, "mainFrame") ;
     [skin pushNSObject:frameInfo.request] ;     lua_setfield(L, -2, "request") ;
     if (NSClassFromString(@"WKSecurityOrigin") && [frameInfo respondsToSelector:@selector(securityOrigin)]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpartial-availability"
         [skin pushNSObject:frameInfo.securityOrigin] ; lua_setfield(L, -2, "securityOrigin") ;
+#pragma clang diagnostic pop
     }
     return 1 ;
 }
@@ -2595,7 +2838,11 @@ static int NSURLCredential_toLua(lua_State *L, id obj) {
 
 static int WKSecurityOrigin_toLua(lua_State *L, id obj) {
     LuaSkin *skin = [LuaSkin shared] ;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpartial-availability"
     WKSecurityOrigin *origin = obj ;
+#pragma clang diagnostic pop
+
     lua_newtable(L) ;
     [skin pushNSObject:origin.host] ;     lua_setfield(L, -2, "host") ;
     lua_pushinteger(L, origin.port) ;     lua_setfield(L, -2, "port") ;
@@ -2626,16 +2873,22 @@ static int userdata_eq(lua_State* L) {
 }
 
 static int userdata_gc(lua_State* L) {
+    if (!luaL_testudata(L, 1, USERDATA_TAG)) return 0 ;
+
     HSWebViewWindow *theWindow = get_objectFromUserdata(__bridge_transfer HSWebViewWindow, L, 1, USERDATA_TAG) ;
     HSWebViewView   *theView   = theWindow.contentView ;
 
+// Remove the Metatable so future use of the variable in Lua won't think its valid
+    lua_pushnil(L) ;
+    lua_setmetatable(L, 1) ;
+
     if (theWindow) {
         LuaSkin *skin = [LuaSkin shared];
-        [theWindow close] ;
-
         theWindow.udRef            = [skin luaUnref:refTable ref:theWindow.udRef] ;
+        theWindow.windowCallback   = [skin luaUnref:refTable ref:theWindow.windowCallback] ;
         theView.navigationCallback = [skin luaUnref:refTable ref:theView.navigationCallback] ;
         theView.policyCallback     = [skin luaUnref:refTable ref:theView.policyCallback] ;
+        [theWindow close] ; // ensure a proper close when gc invoked during reload; nop if hs.webview:delete() is used
 
         // emancipate us from our parent
         if (theWindow.parent) {
@@ -2656,10 +2909,6 @@ static int userdata_gc(lua_State* L) {
         theWindow.delegate         = nil ;
         theWindow                  = nil;
     }
-
-// Remove the Metatable so future use of the variable in Lua won't think its valid
-    lua_pushnil(L) ;
-    lua_setmetatable(L, 1) ;
 
     return 0;
 }
@@ -2701,7 +2950,7 @@ static const luaL_Reg userdata_metaLib[] = {
     {"userAgent",                  webview_userAgent},
     {"certificateChain",           webview_certificateChain},
 
-    {"examineInvalidCertificates",   webview_examineInvalidCertificates},
+    {"examineInvalidCertificates", webview_examineInvalidCertificates},
 #ifdef _WK_DEBUG
     {"preferences",                webview_preferences},
 #endif
@@ -2716,10 +2965,14 @@ static const luaL_Reg userdata_metaLib[] = {
     {"deleteOnClose",              webview_deleteOnClose},
     {"bringToFront",               webview_bringToFront},
     {"sendToBack",                 webview_sendToBack},
+    {"shadow",                     webview_shadow},
     {"alpha",                      webview_alpha},
     {"orderAbove",                 webview_orderAbove},
     {"orderBelow",                 webview_orderBelow},
     {"behavior",                   webview_behavior},
+    {"windowCallback",             webview_windowCallback},
+    {"topLeft",                    webview_topLeft},
+    {"size",                       webview_size},
 
     {"_delete",                    webview_delete},
     {"_windowStyle",               webview_windowStyle},

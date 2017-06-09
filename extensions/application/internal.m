@@ -158,6 +158,56 @@ static int application_pathForBundleID(lua_State* L) {
     return 1;
 }
 
+/// hs.application.infoForBundleID(bundleID) -> table or nil
+/// Function
+/// Gets the metadata of an application from its bundle identifier
+///
+/// Parameters:
+///  * bundleID - A string containing an application bundle identifier (e.g. "com.apple.Safari")
+///
+/// Returns:
+///  * A table containing information about the application, or nil if the bundle identifier could not be located
+static int application_infoForBundleID(lua_State* L) {
+    LuaSkin *skin = [LuaSkin shared];
+    [skin checkArgs:LS_TSTRING, LS_TBREAK];
+
+    NSWorkspace *ws = [NSWorkspace sharedWorkspace];
+    NSString *appPath = [ws absolutePathForAppBundleWithIdentifier:[skin toNSObjectAtIndex:1]];
+    NSBundle *app = [NSBundle bundleWithPath:appPath];
+
+    if (app) {
+        [skin pushNSObject:app.infoDictionary];
+    } else {
+        lua_pushnil(L);
+    }
+
+    return 1;
+}
+
+/// hs.application.infoForBundlePath(bundlePath) -> table or nil
+/// Function
+/// Gets the metadata of an application from its path on disk
+///
+/// Parameters:
+///  * bundlePath - A string containing the path to an application bundle (e.g. "/Applications/Safari.app")
+///
+/// Returns:
+///  * A table containing information about the application, or nil if the bundle could not be located
+static int application_infoForBundlePath(lua_State* L) {
+    LuaSkin *skin = [LuaSkin shared];
+    [skin checkArgs:LS_TSTRING, LS_TBREAK];
+
+    NSBundle *app = [NSBundle bundleWithPath:[skin toNSObjectAtIndex:1]];
+
+    if (app) {
+        [skin pushNSObject:app.infoDictionary];
+    } else {
+        lua_pushnil(L);
+    }
+
+    return 1;
+}
+
 /// hs.application:allWindows() -> list of hs.window objects
 /// Method
 /// Returns all open windows owned by the given app.
@@ -274,7 +324,10 @@ static int application_isunresponsive(lua_State* L) {
 
     pid_t pid = pid_for_app(L, 1);
     ProcessSerialNumber psn;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     GetProcessForPID(pid, &psn);
+#pragma clang diagnostic pop
 
     CGSConnectionID conn = CGSMainConnectionID();
     bool is = CGSEventIsAppUnresponsive(conn, &psn);
@@ -287,8 +340,11 @@ static int application__bringtofront(lua_State* L) {
     pid_t pid = pid_for_app(L, 1);
     BOOL allWindows = lua_toboolean(L, 2);
     ProcessSerialNumber psn;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     GetProcessForPID(pid, &psn);
     BOOL success = (SetFrontProcessWithOptions(&psn, allWindows ? 0 : kSetFrontProcessFrontWindowOnly) == noErr);
+#pragma clang diagnostic pop
     lua_pushboolean(L, success);
     return 1;
 }
@@ -334,7 +390,7 @@ static int application_bundleID(lua_State* L) {
 ///  * A string containing the filesystem path of the application
 static int application_path(lua_State* L) {
     NSRunningApplication* app = nsobject_for_app(L, 1);
-    NSString *appPath = [[NSWorkspace sharedWorkspace] absolutePathForAppBundleWithIdentifier:[app bundleIdentifier]];
+    NSString *appPath = [NSBundle bundleWithURL:[app bundleURL]].bundlePath;
     [[LuaSkin shared] pushNSObject:appPath];
     return 1;
 }
@@ -503,7 +559,7 @@ static int application_kind(lua_State* L) {
 }
 
 // Internal helper function to get an AXUIElementRef for a menu item in an app, by searching all menus
-AXUIElementRef _findmenuitembyname(lua_State* L, AXUIElementRef app, NSString *name) {
+AXUIElementRef _findmenuitembyname(lua_State* L, AXUIElementRef app, NSString *name, BOOL nameIsRegex) {
     LuaSkin *skin = [LuaSkin shared];
     AXUIElementRef foundItem = nil;
     AXUIElementRef menuBar;
@@ -565,10 +621,17 @@ AXUIElementRef _findmenuitembyname(lua_State* L, AXUIElementRef app, NSString *n
             [toCheck addObjectsFromArray:(__bridge NSArray *)cf_menuchildren];
         } else if (childcount == 0) {
             // This doesn't seem to be a submenu, so see if it's a match
-            if ([name isEqualToString:title]) {
+            if (!nameIsRegex && [name isEqualToString:title]) {
                 // It's a match. Store a reference to it and break out of the loop
                 foundItem = element;
                 break;
+            } else {
+                NSPredicate *matchTest = [NSPredicate predicateWithFormat:@"SELF MATCHES %@", name];
+                if ([matchTest evaluateWithObject:title]) {
+                    NSLog(@"win");
+                    foundItem = element;
+                    break;
+                }
             }
         }
     }
@@ -695,12 +758,13 @@ AXUIElementRef _findmenuitembypath(lua_State* L __unused, AXUIElementRef app, NS
     return foundItem;
 }
 
-/// hs.application:findMenuItem(menuItem) -> table or nil
+/// hs.application:findMenuItem(menuItem[, isRegex]) -> table or nil
 /// Method
 /// Searches the application for a menu item
 ///
 /// Parameters:
 ///  * menuItem - This can either be a string containing the text of a menu item (e.g. `"Messages"`) or a table representing the hierarchical path of a menu item (e.g. `{"File", "Share", "Messages"}`). In the string case, all of the application's menus will be searched until a match is found (with no specified behaviour if multiple menu items exist with the same name). In the table case, the whole menu structure will not be searched, because a precise path has been specified.
+///  * isRegex - An optional boolean, defaulting to false, which is only used if `menuItem` is a string. If set to true, `menuItem` will be treated as a regular expression rather than a strict string to match against
 ///
 /// Returns:
 ///  * Returns nil if the menu item cannot be found. If it does exist, returns a table with two keys:
@@ -717,8 +781,12 @@ static int application_findmenuitem(lua_State* L) {
     NSString *name;
     NSMutableArray *path;
     if (lua_isstring(L, 2)) {
+        BOOL nameIsRegex = NO;
+        if (lua_type(L, 3) == LUA_TBOOLEAN) {
+            nameIsRegex = lua_toboolean(L, 3);
+        }
         name = [NSString stringWithUTF8String: luaL_checkstring(L, 2)];
-        foundItem = _findmenuitembyname(L, app, name);
+        foundItem = _findmenuitembyname(L, app, name, nameIsRegex);
     } else if (lua_istable(L, 2)) {
         path = [[NSMutableArray alloc] init];
         lua_pushnil(L);
@@ -780,12 +848,13 @@ static int application_findmenuitem(lua_State* L) {
     return 1;
 }
 
-/// hs.application:selectMenuItem(menuitem) -> true or nil
+/// hs.application:selectMenuItem(menuitem[, isRegex]) -> true or nil
 /// Method
 /// Selects a menu item (i.e. simulates clicking on the menu item)
 ///
 /// Parameters:
 ///  * menuitem - The menu item to select, specified as either a string or a table. See the `menuitem` parameter of `hs.application:findMenuItem()` for more information.
+///  * isRegex - An optional boolean, defaulting to false, which is only used if `menuItem` is a string. If set to true, `menuItem` will be treated as a regular expression rather than a strict string to match against
 ///
 /// Returns:
 ///  * True if the menu item was found and selected, or nil if it wasn't (e.g. because the menu item couldn't be found)
@@ -800,8 +869,12 @@ static int application_selectmenuitem(lua_State* L) {
     NSMutableArray *path;
 
     if (lua_isstring(L, 2)) {
+        BOOL nameIsRegex = NO;
+        if (lua_type(L, 3) == LUA_TBOOLEAN) {
+            nameIsRegex = lua_toboolean(L, 3);
+        }
         name = [NSString stringWithUTF8String: luaL_checkstring(L, 2)];
-        foundItem = _findmenuitembyname(L, app, name);
+        foundItem = _findmenuitembyname(L, app, name, nameIsRegex);
     } else if (lua_istable(L, 2)) {
         path = [[NSMutableArray alloc] init];
         lua_pushnil(L);
@@ -847,15 +920,20 @@ id _getMenuStructure(AXUIElementRef menuItem) {
                                                                       (__bridge NSString *)kAXEnabledAttribute,
                                                                       (__bridge NSString *)kAXMenuItemCmdGlyphAttribute]];
     CFArrayRef cfAttributeValues = NULL;
+    AXError result;
 
-    AXUIElementCopyMultipleAttributeValues(menuItem, (__bridge CFArrayRef)attributeNames, 0, &cfAttributeValues);
+    result = AXUIElementCopyMultipleAttributeValues(menuItem, (__bridge CFArrayRef)attributeNames, 0, &cfAttributeValues);
 
-    // See if we're dealing with the "special" Apple menu, and ignore it
-    CFTypeRef firstElement = CFArrayGetValueAtIndex(cfAttributeValues, 0);
-    if (CFGetTypeID(firstElement) == CFStringGetTypeID()) {
-        if (CFStringCompare((CFStringRef)CFArrayGetValueAtIndex(cfAttributeValues, 0), (__bridge CFStringRef)@"Apple", 0) == kCFCompareEqualTo) {
-            CFRelease(cfAttributeValues);
-            cfAttributeValues = nil;
+    if (result != kAXErrorSuccess) {
+        [LuaSkin logBreadcrumb:@"Unable to fetch menu structure"];
+    } else {
+        // See if we're dealing with the "special" Apple menu, and ignore it
+        CFTypeRef firstElement = CFArrayGetValueAtIndex(cfAttributeValues, 0);
+        if (firstElement && CFGetTypeID(firstElement) == CFStringGetTypeID()) {
+            if (CFStringCompare((CFStringRef)CFArrayGetValueAtIndex(cfAttributeValues, 0), (__bridge CFStringRef)@"Apple", 0) == kCFCompareEqualTo) {
+                CFRelease(cfAttributeValues);
+                cfAttributeValues = nil;
+            }
         }
     }
 
@@ -873,7 +951,8 @@ id _getMenuStructure(AXUIElementRef menuItem) {
         }
 
         // Convert the modifier keys into a format we can usefully hand over to Lua
-        id modsSrc = [attributeValues objectAtIndex:5];
+        NSUInteger modifiersIndex = [attributeNames indexOfObjectIdenticalTo:(__bridge NSString *)kAXMenuItemCmdModifiersAttribute];
+        id modsSrc = [attributeValues objectAtIndex:modifiersIndex];
         id modsDst = nil;
         if (![modsSrc isKindOfClass:[NSNumber class]]) {
             modsDst = [NSNull null];
@@ -882,8 +961,10 @@ id _getMenuStructure(AXUIElementRef menuItem) {
             NSMutableArray *modsArr = [[NSMutableArray alloc] init];
             modsDst = modsArr;
 
-            // Cmd is assumed
-            [modsArr addObject:@"cmd"];
+            if (!(modsInt & kAXMenuItemModifierNoCommand)) {
+                // cmd is handled differently, it exists unless kAXMenuItemModifierNoCommand is found
+                [modsArr addObject:@"cmd"];
+            }
 
             if (modsInt & kAXMenuItemModifierShift) {
                 [modsArr addObject:@"shift"];
@@ -894,14 +975,9 @@ id _getMenuStructure(AXUIElementRef menuItem) {
             if (modsInt & kAXMenuItemModifierControl) {
                 [modsArr addObject:@"ctrl"];
             }
-            if (modsInt & kAXMenuItemModifierNoCommand) {
-                // Special case, this means nothing, not even Cmd
-                [modsArr removeAllObjects];
-                modsDst = [NSNull null];
-            }
         }
 
-        [attributeValues replaceObjectAtIndex:5 withObject:modsDst];
+        [attributeValues replaceObjectAtIndex:modifiersIndex withObject:modsDst];
 
         // Get the children of this item, if any
         if (AXUIElementCopyAttributeValues(menuItem, kAXChildrenAttribute, 0, MAX_INT, &cfChildren) == kAXErrorSuccess) {
@@ -986,6 +1062,9 @@ static int application_getMenus(lua_State* L) {
 ///
 /// Returns:
 ///  * True if the application was either launched or focused, otherwise false (e.g. if the application doesn't exist)
+///
+/// Notes:
+///  * The name parameter should match the name of the application on disk, e.g. "IntelliJ IDEA", rather than "IntelliJ"
 static int application_launchorfocus(lua_State* L) {
     NSString* name = [NSString stringWithUTF8String: luaL_checkstring(L, 1)];
     BOOL success = [[NSWorkspace sharedWorkspace] launchApplication: name];
@@ -1053,6 +1132,8 @@ static const luaL_Reg applicationlib[] = {
     {"applicationsForBundleID", application_applicationsForBundleID},
     {"nameForBundleID", application_nameForBundleID},
     {"pathForBundleID", application_pathForBundleID},
+    {"infoForBundleID", application_infoForBundleID},
+    {"infoForBundlePath", application_infoForBundlePath},
 
     {"allWindows", application_allWindows},
     {"mainWindow", application_mainWindow},

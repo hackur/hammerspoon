@@ -20,7 +20,7 @@ local function getKeycode(s)
   elseif type(s)~='string' then error('key must be a string or a number',3)
   elseif (s:sub(1, 1) == '#') then n=tonumber(s:sub(2))
   else n=keycodes.map[slower(s)] end
-  if not n then error('Invalid key: '..s,3) end
+  if not n then error('Invalid key: '..s..' - this may mean that the key requested does not exist in your keymap (particularly if you switch keyboard layouts frequently)',3) end
   return n
 end
 
@@ -68,9 +68,12 @@ local function enable(self,force,isModal)
   end
   self.enabled = true
   local returnVal = self._hk:enable() --objc
-  log[isModal and 'df' or 'f']('Enabled hotkey %s%s',self.msg,isModal and ' (in modal)' or '')
-  tinsert(hotkeys[idx],self) -- bring to the top of the stack
-  return returnVal
+  if returnVal ~= nil then
+    log[isModal and 'df' or 'f']('Enabled hotkey %s%s',self.msg,isModal and ' (in modal)' or '')
+  end
+    tinsert(hotkeys[idx],self) -- bring to the top of the stack
+--   return returnVal
+    return self
 end
 
 --- hs.hotkey:disable() -> hs.hotkey object
@@ -220,6 +223,7 @@ end
 --- Function
 --- Disables all previously set callbacks for a given keyboard combination
 ---
+--- Parameters:
 ---  * mods - A table or a string containing (as elements, or as substrings with any separator) the keyboard modifiers required,
 ---    which should be zero or more of the following:
 ---    * "cmd", "command" or "⌘"
@@ -239,6 +243,7 @@ end
 --- Function
 --- Deletes all previously set callbacks for a given keyboard combination
 ---
+--- Parameters:
 ---  * mods - A table or a string containing (as elements, or as substrings with any separator) the keyboard modifiers required,
 ---    which should be zero or more of the following:
 ---    * "cmd", "command" or "⌘"
@@ -339,6 +344,25 @@ end
 ---  * This function is just a wrapper that performs `hs.hotkey.new(...):enable()`
 function hotkey.bind(...)
   return hotkey.new(...):enable()
+end
+
+--- hs.hotkey.bindSpec(keyspec, ...) -> hs.hotkey object
+--- Constructor
+--- Creates a hotkey and enables it immediately
+---
+--- Parameters:
+---  * keyspec - A table containing two items:
+---   * first, a table containing keyboard modifiers, as specified in `hs.hotkey.bind()`
+---   * second, a string containing the name of a keyboard key, as specified in `hs.hotkey.bind()`
+---  * ... - All remaining arguments are as specified in `hs.hotkey.bind()`
+---
+--- Returns:
+---  * A new `hs.hotkey` object for method chaining
+---
+--- Notes:
+---  * This function is just a wrapper that performs `hs.hotkey.bind(keyspec[1], keyspec[2], ...)`
+function hotkey.bindSpec(keyspec, ...)
+  return hotkey.bind(keyspec[1], keyspec[2], ...)
 end
 
 --- === hs.hotkey.modal ===

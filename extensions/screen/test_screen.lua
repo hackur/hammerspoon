@@ -1,3 +1,6 @@
+hs.screen = require("hs.screen")
+hs.geometry = require("hs.geometry")
+
 function testMainScreen()
   local screen = hs.screen.mainScreen()
   assertIsUserdataOfType("hs.screen", screen)

@@ -47,12 +47,17 @@
 @property(nonatomic, retain) NSArray *filteredChoices;
 
 // Lua callback references
+@property(nonatomic) int showCallbackRef;
 @property(nonatomic) int choicesCallbackRef;
 @property(nonatomic) int queryChangedCallbackRef;
 @property(nonatomic) int completionCallbackRef;
+@property(nonatomic) int rightClickCallbackRef;
 
 // A pointer to the hs.chooser module's references table
 @property(nonatomic) int *refTable;
+
+// Keep track of whether we are observing macOS interface theme (light/dark)
+@property(nonatomic) BOOL isObservingThemeChanges;
 
 // Initialiser
 - (id)initWithRefTable:(int *)refTable completionCallbackRef:(int)completionCallbackRef;
@@ -64,17 +69,20 @@
 - (void)resizeWindow;
 - (void)show;
 - (void)hide;
+- (BOOL)isVisible;
 
 // NSTableViewDataSource
 - (NSInteger) numberOfRowsInTableView:(NSTableView *)tableView;
 
 // HSChooserTableViewDelegate
 - (void)tableView:(NSTableView *)tableView didClickedRow:(NSInteger)row;
+- (void)didRightClickAtRow:(NSInteger)row;
 
 // NSTextFieldDelgate
 
 // Actions
 - (IBAction)queryDidPressEnter:(id)sender;
+- (IBAction)cancel:(id)sender;
 
 // Choice related methods
 - (void)updateChoices;
@@ -84,6 +92,6 @@
 - (NSArray *)getChoicesWithOptions:(BOOL)includeFiltered;
 
 // UI customisation methods
-- (void)setBgLightDark:(BOOL)isDark;
+- (void)setBgLightDark:(NSNotification *)notification;
 - (BOOL)isBgLightDark;
 @end

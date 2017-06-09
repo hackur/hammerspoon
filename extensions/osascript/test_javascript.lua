@@ -1,3 +1,5 @@
+hs.osascript = require("hs.osascript")
+
 function testJavaScriptParseError()
   local js = "2 +"
   local status, object, descriptor = hs.osascript.javascript(js)

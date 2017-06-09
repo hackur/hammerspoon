@@ -1,3 +1,9 @@
+hs.uielement = require("hs.uielement")
+hs.window = require("hs.window")
+hs.timer = require("hs.timer")
+hs.eventtap = require("hs.eventtap")
+hs.application = require("hs.application")
+
 function getPrefs()
   hs.openPreferences()
   return hs.uielement.focusedElement()

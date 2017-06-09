@@ -80,6 +80,16 @@ static int libraryTestObjectDoThing(lua_State *L) {
     return 1;
 }
 
+static int libraryTestCauseException(lua_State *L) {
+    NSMutableDictionary *testDict = [[NSMutableDictionary alloc] initWithCapacity:1];
+    NSString *key = @"testKey";
+    NSString *value = nil;
+
+    [testDict setObject:value forKey:key];
+    lua_pushstring(L, "NEVERSEE");
+    return 1;
+}
+
 static int libraryTestObjectGC(lua_State *L) {
     libraryObjectGCCalled = YES;
     return 0;
@@ -88,6 +98,7 @@ static int libraryTestObjectGC(lua_State *L) {
 static const luaL_Reg functions[] = {
     {"new", libraryTestNew},
     {"doThing", libraryTestDoThing},
+    {"causeException", libraryTestCauseException},
     {NULL, NULL}
 };
 
@@ -147,9 +158,19 @@ static int pushTestUserData(lua_State *L, id object) {
 
     // Find where our bundle is on disk
     NSDictionary *environment = [NSProcessInfo processInfo].environment;
+
     NSString *xcTestConfigurationFilePath = environment[@"XCTestConfigurationFilePath"];
     NSRange chopPoint = [xcTestConfigurationFilePath rangeOfString:@"LuaSkinTests.xctest/Contents/Resources/"];
-    NSString *bundlePath = [xcTestConfigurationFilePath substringWithRange:NSMakeRange(0, chopPoint.location + chopPoint.length - 1)];
+    NSString *bundlePath = nil;
+
+    if (chopPoint.location == NSNotFound) {
+        // We're probably running under Xcode 8.1 (and later?) which doesn't export XCTestConfigurationFilePath anymore
+        //bundlePath = [NSString stringWithFormat:@"%@/LuaSkinTests.xctest/Contents/Resources/", environment[@"PWD"]];
+        bundlePath = [[NSBundle bundleForClass:[self class]] resourcePath];
+    } else {
+        // We're probably running under Xcode 8.0 or earlier
+        bundlePath = [xcTestConfigurationFilePath substringWithRange:NSMakeRange(0, chopPoint.location + chopPoint.length - 1)];
+    }
 
     // Now find lsunit.lua within the bundle. It will end by require()ing our init.lua
     NSString *lsUnitPath = [NSString stringWithFormat:@"%@/lsunit.lua", bundlePath];
@@ -162,8 +183,8 @@ static int pushTestUserData(lua_State *L, id object) {
     NSLog(@"Loading LuaSkinTests lsunit.lua from %@", lsUnitPath);
     int loadresult = luaL_loadfile(self.skin.L, [lsUnitPath UTF8String]);
     if (loadresult != 0) {
-        NSLog(@"ERROR: Unable to load lsunit.lua from LuaSkinTests.xctest");
-        NSException *loadException = [NSException exceptionWithName:@"LuaSkinTestsLSInitLoadfileFailed" reason:@"Unable to load lsunit.lua from LuaSkinTests.xctest" userInfo:nil];
+        NSLog(@"ERROR: Unable to load lsunit.lua from %@", lsUnitPath);
+        NSException *loadException = [NSException exceptionWithName:@"LuaSkinTestsLSInitLoadfileFailed" reason:[NSString stringWithFormat:@"Unable to load lsunit.lua from %@", lsUnitPath] userInfo:nil];
         @throw loadException;
     }
 
@@ -485,6 +506,26 @@ static int pushTestUserData(lua_State *L, id object) {
     // It seems like we need to set a lua_atpanic() function and have that long jump to safety to prevent the abort(), but what can we jump to?
 }
 
+- (void)testLuaTypeAtIndex {
+    lua_State *L = self.skin.L ;
+
+    lua_newtable(L) ;
+    lua_newtable(L) ;
+    luaL_loadstring(L, "function foo() end") ;
+    lua_setfield(L, -2, "__call") ;
+    lua_setmetatable(L, -2) ;
+    XCTAssertEqual(LUA_TFUNCTION, [self.skin luaTypeAtIndex:-1]) ;
+    lua_pop(L, 1) ;
+
+    lua_newtable(L) ;
+    lua_newtable(L) ;
+    luaL_loadstring(L, "function foo() end") ;
+    lua_setfield(L, -2, "__notcall") ;
+    lua_setmetatable(L, -2) ;
+    XCTAssertEqual(LUA_TTABLE, [self.skin luaTypeAtIndex:-1]) ;
+    lua_pop(L, 1) ;
+}
+
 - (void)testPushNSObject {
     LSTestDelegate *testDelegate = [[LSTestDelegate alloc] init];
     self.skin.delegate = testDelegate;
@@ -558,8 +599,11 @@ static int pushTestUserData(lua_State *L, id object) {
     XCTAssertEqual(LUA_TTABLE, lua_type(self.skin.L, -1));
 
     // Test pushing an object which contains itself
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wobjc-circular-container"
     NSMutableDictionary *selfRefDict = [NSMutableDictionary dictionary];
     selfRefDict[@"self"] = selfRefDict;
+#pragma clang diagnostic pop
     [self.skin pushNSObject:selfRefDict];
     XCTAssertEqual(LUA_TTABLE, lua_type(self.skin.L, -1));
 
@@ -1029,6 +1073,23 @@ id luaObjectHelperTestFunction(lua_State *L, int idx) {
     // Test the userdata mapped variants
     XCTAssertTrue([self.skin registerLuaObjectHelper:luaObjectHelperTestFunction forClass:"luaObjectHelperTestUserdata" withUserdataMapping:"luaskin.testObjectHelper"]);
     XCTAssertFalse([self.skin registerLuaObjectHelper:luaObjectHelperTestFunction forClass:"luaObjectHelperTestUserdata" withUserdataMapping:"luaskin.testObjectHelper"]);
+}
+
+- (void)testObjCExceptionHandler {
+    [self.skin registerLibrary:functions metaFunctions:metaFunctions];
+
+    // Normally we'd be returning to a luaopen_ function after registerLibrary, and thus the library would be inserted into the right namespace. Since we're not doing that here, we'll just go ahead and register it as a global, using the library name
+    lua_setglobal(self.skin.L, libraryTestName);
+
+    // Call a function from the test library and test its return value
+    luaL_loadstring(self.skin.L, "return testLibrary.causeException()");
+    BOOL pCallResult = [self.skin protectedCallAndTraceback:0 nresults:1];
+    XCTAssertFalse(pCallResult);
+
+    NSString *result = @(lua_tostring(self.skin.L, -1));
+
+    XCTAssertNotEqualObjects(@"NEVERSEE", result);
+    XCTAssertTrue([result containsString:@"NSInvalidArgumentException"]);
 }
 
 @end

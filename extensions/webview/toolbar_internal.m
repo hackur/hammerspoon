@@ -20,6 +20,7 @@ static NSArray *keysToKeepFromDefinitionDictionary ;
 
 @interface HSToolbarSearchField : NSSearchField
 @property (weak) NSToolbarItem *toolbarItem ;
+@property        BOOL          releaseOnCallback ;
 
 - (void)searchCallback:(NSMenuItem *)sender ;
 @end
@@ -168,6 +169,11 @@ static NSMenu *createCoreSearchFieldMenu() {
         searchText = [sender stringValue] ;
         item       = [sender toolbarItem] ;
         argCount++ ;
+        if (((HSToolbarSearchField *)sender).releaseOnCallback) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [((HSToolbarSearchField *)sender).window makeFirstResponder:((HSToolbarSearchField *)sender).window.contentView] ;
+            }) ;
+        }
     } else {
         [LuaSkin logError:[NSString stringWithFormat:@"%s:Unknown object sent to callback:%@", USERDATA_TB_TAG, [sender debugDescription]]] ;
         return ;
@@ -531,6 +537,13 @@ static NSMenu *createCoreSearchFieldMenu() {
                 [skin logWarn:[NSString stringWithFormat:@"%s:%@ for %@ must be a number", USERDATA_TB_TAG, keyName, identifier]] ;
                 [itemDefinition removeObjectForKey:keyName] ;
             }
+        } else if ([keyName isEqualToString:@"searchReleaseFocusOnCallback"] && [itemView isKindOfClass:[HSToolbarSearchField class]]) {
+            if ([keyValue isKindOfClass:[NSNumber class]] && !strcmp(@encode(BOOL), [keyValue objCType])) {
+                itemView.releaseOnCallback = [keyValue boolValue] ;
+            } else {
+                [skin logWarn:[NSString stringWithFormat:@"%s:%@ for %@ must be a boolean", USERDATA_TB_TAG, keyName, identifier]] ;
+                [itemDefinition removeObjectForKey:keyName] ;
+            }
         } else if ([keyName isEqualToString:@"searchText"] && [itemView isKindOfClass:[HSToolbarSearchField class]]) {
             if ([keyValue isKindOfClass:[NSString class]]) {
                 itemView.stringValue = keyValue ;
@@ -751,6 +764,7 @@ static NSMenu *createCoreSearchFieldMenu() {
         [self sizeToFit];
 
         _toolbarItem = nil ;
+        _releaseOnCallback = NO ;
 
         ((NSSearchFieldCell *)self.cell).searchMenuTemplate = createCoreSearchFieldMenu();
     }
@@ -816,7 +830,7 @@ static int newHSToolbar(lua_State *L) {
 ///  * if the function is used to attach/detach a toolbar, then the first object provided will be returned ; if this function is used to get the current toolbar object for a webview or the console, then the toolbarObject or nil will be returned.
 ///
 /// Notes:
-///  * This function is not expected to be used directly (though it can be) -- it is added to the `hs.webview` object metatable so that it may be invoked as `hs.webview:toolbar([toolbarObject | nil])` and to the `hs.console` module so that it may be invoked as `hs.console.toolbar([toolbarObject | nil])`.
+///  * This function is not expected to be used directly (though it can be) -- it is added to the `hs.webview` object metatable so that it may be invoked as `hs.webview:attachedToolbar([toolbarObject | nil])` and to the `hs.console` module so that it may be invoked as `hs.console.toolbar([toolbarObject | nil])`.
 ///
 ///  * If the toolbar is currently attached to another window when this function is called, it will be detached from the original window and attached to the new one specified by this function.
 static int attachToolbar(lua_State *L) {
@@ -1339,7 +1353,7 @@ static int addToolbarItems(lua_State *L) {
 /// Method
 /// Deletes the toolbar item specified completely from the toolbar, removing it first, if the toolbar item is currently active.
 ///
-/// Paramters:
+/// Parameters:
 ///  * `identifier` - the toolbar item's identifier
 ///
 /// Returns:
@@ -1515,6 +1529,40 @@ static int selectedToolbarItem(lua_State *L) {
         lua_pushvalue(L, 1) ;
     } else {
         [skin pushNSObject:[toolbar selectedItemIdentifier]] ;
+    }
+    return 1 ;
+}
+
+/// hs.webview.toolbar:selectSearchField([identifier]) -> toolbarObject | false
+/// Method
+/// Programmatically focus the search field for keyboard input.
+///
+/// Parameters:
+///  * identifier - an optional string specifying the id of the specific search field to focus.  If this parameter is not provided, this method attempts to focus the first active searchfield found in the toolbar
+///
+/// Returns:
+///  * if the searchfield can be found and is currently in the toolbar, returns the toolbarObject; otherwise returns false.
+///
+/// Notes:
+///  * if there is current text in the searchfield, it will be selected so that any subsequent typing by the user will replace the current value in the searchfield.
+static int toolbar_selectSearchField(lua_State *L) {
+    LuaSkin *skin = [LuaSkin shared] ;
+    [skin checkArgs:LS_TUSERDATA, USERDATA_TB_TAG, LS_TSTRING | LS_TOPTIONAL, LS_TBREAK] ;
+    HSToolbar *toolbar = [skin toNSObjectAtIndex:1] ;
+    NSString *targetID = (lua_gettop(L) == 2) ? [skin toNSObjectAtIndex:2] : nil ;
+    NSToolbarItem *targetItem ;
+    for (NSToolbarItem *item in toolbar.visibleItems) {
+        if (targetID && ![targetID isEqualToString:item.itemIdentifier]) continue ;
+        if ([item.view isKindOfClass:[HSToolbarSearchField class]]) {
+            targetItem = item ;
+            break ;
+        }
+    }
+    if (targetItem) {
+        [(HSToolbarSearchField *)targetItem.view selectText:nil] ;
+        lua_pushvalue(L, 1) ;
+    } else {
+        lua_pushboolean(L, NO) ;
     }
     return 1 ;
 }
@@ -1764,6 +1812,8 @@ static int pushNSToolbarItem(lua_State *L, id obj) {
             lua_pushnumber(L, [value maxSize].width) ; lua_setfield(L, -2, "searchWidth") ;
             [skin pushNSObject:[((HSToolbarSearchField *)value.view) stringValue]] ;
             lua_setfield(L, -2, "searchText") ;
+            lua_pushboolean(L, ((HSToolbarSearchField *)value.view).releaseOnCallback) ;
+            lua_setfield(L, -2, "searchReleaseFocusOnCallback") ;
             lua_pushinteger(L, [[((HSToolbarSearchField *)value.view) cell] maximumRecents]) ;
             lua_setfield(L, -2, "searchHistoryLimit") ;
             [skin pushNSObject:[[((HSToolbarSearchField *)value.view) cell] recentSearches]] ;
@@ -1868,6 +1918,7 @@ static const luaL_Reg userdata_metaLib[] = {
 
     {"modifyItem",         modifyToolbarItem},
     {"insertItem",         insertItemAtIndex},
+    {"selectSearchField",  toolbar_selectSearchField},
 
     {"items",              toolbarItems},
     {"visibleItems",       visibleToolbarItems},

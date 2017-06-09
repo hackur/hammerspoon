@@ -1,9 +1,9 @@
-#import <Cocoa/Cocoa.h>
-#import <Carbon/Carbon.h>
-#import <LuaSkin/LuaSkin.h>
+@import Cocoa ;
+@import Carbon ;
+@import LuaSkin ;
 
-#define USERDATA_TAG "hs.keycodes.callback"
-int refTable;
+static char *USERDATA_TAG  = "hs.keycodes.callback" ;
+static int refTable;
 
 static void pushkeycode(lua_State* L, int code, const char* key) {
     // t[key] = code
@@ -28,32 +28,34 @@ int keycodes_cachemap(lua_State* L) {
         kVK_ANSI_Grave, kVK_ANSI_Equal, kVK_ANSI_Minus, kVK_ANSI_RightBracket,
         kVK_ANSI_LeftBracket, kVK_ANSI_Quote, kVK_ANSI_Semicolon, kVK_ANSI_Backslash,
         kVK_ANSI_Comma, kVK_ANSI_Slash, kVK_ANSI_Period, kVK_ISO_Section,
+        kVK_JIS_Yen, kVK_JIS_Underscore, kVK_JIS_KeypadComma, kVK_JIS_Eisu, kVK_JIS_Kana,
     };
 
+    // NOTE: It appears that TISCopyCurrentKeyboardInputSources() can return NULL
     TISInputSourceRef currentKeyboard = TISCopyCurrentKeyboardInputSource();
     CFDataRef layoutData = TISGetInputSourceProperty(currentKeyboard, kTISPropertyUnicodeKeyLayoutData);
 
     if (layoutData) {
-        const UCKeyboardLayout *keyboardLayout = (const UCKeyboardLayout *)CFDataGetBytePtr(layoutData);
+        const UCKeyboardLayout *keyboardLayout = (const void *)CFDataGetBytePtr(layoutData);
         UInt32 keysDown = 0;
         UniChar chars[4];
         UniCharCount realLength;
 
         for (int i = 0 ; i < (int)(sizeof(relocatableKeyCodes)/sizeof(relocatableKeyCodes[0])) ; i++) {
-            UCKeyTranslate(keyboardLayout,
-                           relocatableKeyCodes[i],
-                           kUCKeyActionDisplay,
-                           0,
-                           LMGetKbdType(),
-                           kUCKeyTranslateNoDeadKeysBit,
-                           &keysDown,
-                           sizeof(chars) / sizeof(chars[0]),
-                           &realLength,
-                           chars);
+            if (UCKeyTranslate(keyboardLayout,
+                               relocatableKeyCodes[i],
+                               kUCKeyActionDown,
+                               0,
+                               LMGetKbdType(),
+                               kUCKeyTranslateNoDeadKeysMask,
+                               &keysDown,
+                               sizeof(chars) / sizeof(chars[0]),
+                               &realLength,
+                               chars) == noErr && realLength > 0) {
+                const char* name = [[NSString stringWithCharacters:chars length:1] UTF8String];
 
-            const char* name = [[NSString stringWithCharacters:chars length:1] UTF8String];
-
-            pushkeycode(L, relocatableKeyCodes[i], name);
+                pushkeycode(L, relocatableKeyCodes[i], name);
+            }
         }
     }
     else {
@@ -98,7 +100,7 @@ int keycodes_cachemap(lua_State* L) {
         pushkeycode(L, kVK_ANSI_Minus, "-");
         pushkeycode(L, kVK_ANSI_RightBracket, "]");
         pushkeycode(L, kVK_ANSI_LeftBracket, "[");
-        pushkeycode(L, kVK_ANSI_Quote, "\"");
+        pushkeycode(L, kVK_ANSI_Quote, "'");
         pushkeycode(L, kVK_ANSI_Semicolon, ";");
         pushkeycode(L, kVK_ANSI_Backslash, "\\");
         pushkeycode(L, kVK_ANSI_Comma, ",");
@@ -107,7 +109,9 @@ int keycodes_cachemap(lua_State* L) {
         pushkeycode(L, kVK_ISO_Section, "§");
     }
 
-    CFRelease(currentKeyboard);
+    if (currentKeyboard) {
+        CFRelease(currentKeyboard);
+    }
 
     pushkeycode(L, kVK_F1, "f1");
     pushkeycode(L, kVK_F2, "f2");
@@ -164,6 +168,24 @@ int keycodes_cachemap(lua_State* L) {
     pushkeycode(L, kVK_RightArrow, "right");
     pushkeycode(L, kVK_DownArrow, "down");
     pushkeycode(L, kVK_UpArrow, "up");
+
+    pushkeycode(L, kVK_Command, "cmd");
+    // kVK_RightCommand first appeared in 10.12
+    pushkeycode(L, /* kVK_RightCommand */ 0x36, "rightcmd");
+    pushkeycode(L, kVK_Shift, "shift");
+    pushkeycode(L, kVK_CapsLock, "capslock");
+    pushkeycode(L, kVK_Option, "alt");
+    pushkeycode(L, kVK_Control, "ctrl");
+    pushkeycode(L, kVK_RightShift, "rightshift");
+    pushkeycode(L, kVK_RightOption, "rightalt");
+    pushkeycode(L, kVK_RightControl, "rightctrl");
+    pushkeycode(L, kVK_Function, "fn");
+
+    pushkeycode(L, kVK_JIS_Yen, "yen");
+    pushkeycode(L, kVK_JIS_Underscore, "underscore");
+    pushkeycode(L, kVK_JIS_KeypadComma, "pad,");
+    pushkeycode(L, kVK_JIS_Eisu, "eisu");
+    pushkeycode(L, kVK_JIS_Kana, "kana");
 
     return 1;
 }
@@ -284,6 +306,39 @@ CFArrayRef getAllInputMethods() {
     return TISCreateInputSourceList((__bridge CFDictionaryRef)@{(__bridge NSString *)kTISPropertyInputSourceType : (__bridge NSString *)kTISTypeKeyboardInputMode}, false);
 }
 
+/// hs.keycodes.currentSourceID([sourceID]) -> string | boolean
+/// Function
+/// Get or set the source id for the keyboard input source
+///
+/// Parameters:
+///  * sourceID - an optional string specifying the input source to set for keyboard input
+///
+/// Returns:
+///  * If no parameter is provided, returns a string containing the source id for the current keyboard layout or input method; if a parameter is provided, returns true or false specifying whether or not the input source was able to be changed.
+static int keycodes_sourceID(lua_State* L) {
+    LuaSkin *skin = [LuaSkin shared];
+    [skin checkArgs:LS_TSTRING | LS_TOPTIONAL, LS_TBREAK] ;
+
+    if (lua_gettop(L) == 0) {
+        TISInputSourceRef layout = TISCopyCurrentKeyboardInputSource();
+        [skin pushNSObject:(__bridge id)TISGetInputSourceProperty(layout, kTISPropertyInputSourceID)] ;
+        CFRelease(layout);
+    } else {
+        BOOL found = NO ;
+        NSString     *sourceID = [skin toNSObjectAtIndex:1] ;
+        NSDictionary *prop     = @{ (__bridge NSString *)kTISPropertyInputSourceID : sourceID } ;
+        CFArrayRef   sources   = TISCreateInputSourceList((__bridge CFDictionaryRef)prop, false);
+        if (sources) {
+            if (CFArrayGetCount(sources) > 0) {
+                found = (TISSelectInputSource((TISInputSourceRef)CFArrayGetValueAtIndex(sources, 0)) == noErr) ;
+            }
+            CFRelease(sources) ;
+        }
+        lua_pushboolean(L, found) ;
+    }
+    return 1;
+}
+
 /// hs.keycodes.currentLayout() -> string
 /// Function
 /// Gets the name of the current keyboard layout
@@ -293,7 +348,7 @@ CFArrayRef getAllInputMethods() {
 ///
 /// Returns:
 ///  * A string containing the name of the current keyboard layout
-static int keycodes_currentLayout(lua_State* L) {
+static int keycodes_currentLayout(__unused lua_State* L) {
     LuaSkin *skin = [LuaSkin shared];
     TISInputSourceRef layout = TISCopyCurrentKeyboardLayoutInputSource();
     [skin pushNSObject:getLayoutName(layout)];
@@ -310,7 +365,7 @@ static int keycodes_currentLayout(lua_State* L) {
 ///
 /// Returns:
 ///  * An hs.image object containing the icon, if available
-static int keycodes_currentLayoutIcon(lua_State* L) {
+static int keycodes_currentLayoutIcon(__unused lua_State* L) {
     TISInputSourceRef layout = TISCopyCurrentKeyboardInputSource();
 
     pushSourceIcon(layout);
@@ -318,61 +373,102 @@ static int keycodes_currentLayoutIcon(lua_State* L) {
     return 1;
 }
 
-/// hs.keycodes.layouts() -> table
+/// hs.keycodes.layouts([sourceID]) -> table
 /// Function
-/// Gets all of the enabled keyboard layouts
+/// Gets all of the enabled keyboard layouts that the keyboard input source can be switched to
 ///
 /// Parameters:
-///  * None
+///  * sourceID - an optional boolean, default false, indicating whether the keyboard layout names should be returned (false) or their source IDs (true).
 ///
 /// Returns:
 ///  * A table containing a list of keyboard layouts enabled in System Preferences
+///
+/// Notes:
+///  * Only those layouts which can be explicitly switched to will be included in the table.  Keyboard layouts which are part of input methods are not included.  See `hs.keycodes.methods`.
 static int keycodes_layouts(lua_State* L) {
     LuaSkin *skin = [LuaSkin shared];
-    NSMutableArray *layouts = [[NSMutableArray alloc] init];
+    [skin checkArgs:LS_TBOOLEAN | LS_TOPTIONAL, LS_TBREAK] ;
+    BOOL sourceIDsOnly = lua_gettop(L) == 1 ? (BOOL)lua_toboolean(L, 1) : NO ;
     CFArrayRef layoutRefs = getAllLayouts();
 
-    for (int i = 0; i < CFArrayGetCount(layoutRefs); i++) {
-        TISInputSourceRef layout = (TISInputSourceRef)(CFArrayGetValueAtIndex(layoutRefs, i));
-        [layouts addObject:getLayoutName(layout)];
+    lua_newtable(L) ;
+    if (layoutRefs) {
+        for (int i = 0; i < CFArrayGetCount(layoutRefs); i++) {
+            TISInputSourceRef layout = (TISInputSourceRef)(CFArrayGetValueAtIndex(layoutRefs, i));
+            if (sourceIDsOnly) {
+                [skin pushNSObject:(__bridge id)TISGetInputSourceProperty(layout, kTISPropertyInputSourceID)] ;
+            } else {
+                [skin pushNSObject:getLayoutName(layout)];
+            }
+            lua_rawseti(L, -2, luaL_len(L, -2) + 1) ;
+        }
+        CFRelease(layoutRefs);
     }
-
-    CFRelease(layoutRefs);
-
-    [skin pushNSObject:layouts];
     return 1;
 }
 
-/// hs.keycodes.methods() -> table
+/// hs.keycodes.methods([sourceID]) -> table
 /// Function
-/// Gets all of the enabled input methods
+/// Gets all of the enabled input methods that the keyboard input source can be switched to
+///
+/// Parameters:
+///  * sourceID - an optional boolean, default false, indicating whether the keyboard input method names should be returned (false) or their source IDs (true).
+///
+/// Returns:
+///  * A table containing a list of input methods enabled in System Preferences
+///
+/// Notes:
+///  * Keyboard layouts which are not part of an input method are not included in this table.  See `hs.keycodes.layouts`.
+static int keycodes_methods(lua_State* L) {
+    LuaSkin *skin = [LuaSkin shared];
+    [skin checkArgs:LS_TBOOLEAN | LS_TOPTIONAL, LS_TBREAK] ;
+    BOOL sourceIDsOnly = lua_gettop(L) == 1 ? (BOOL)lua_toboolean(L, 1) : NO ;
+    CFArrayRef methodRefs = getAllInputMethods();
+
+    lua_newtable(L) ;
+    if (methodRefs) {
+        for (int i = 0; i < CFArrayGetCount(methodRefs); i++) {
+            TISInputSourceRef method = (TISInputSourceRef)(CFArrayGetValueAtIndex(methodRefs, i));
+            if (sourceIDsOnly) {
+                [skin pushNSObject:(__bridge id)TISGetInputSourceProperty(method, kTISPropertyInputSourceID)] ;
+            } else {
+                [skin pushNSObject:getLayoutName(method)];
+            }
+            lua_rawseti(L, -2, luaL_len(L, -2) + 1) ;
+        }
+        CFRelease(methodRefs);
+    }
+    return 1;
+}
+
+/// hs.keycodes.currentMethod() -> string
+/// Function
+/// Get current input method
 ///
 /// Parameters:
 ///  * None
 ///
 /// Returns:
-///  * A table containing a list of input methods enabled in System Preferences
-static int keycodes_methods(lua_State* L) {
-    LuaSkin *skin = [LuaSkin shared];
-    NSMutableArray *methods = [[NSMutableArray alloc] init];
+///  * Name of current input method, or nil
+static int keycodes_currentMethod(__unused lua_State * L) {
+    LuaSkin * skin = [LuaSkin shared];
     CFArrayRef methodRefs = getAllInputMethods();
+    NSString * currentMethod = nil;
 
-    if (!methodRefs) {
-        lua_newtable(L);
-        return 1;
+    if (methodRefs) {
+        for (int i = 0 ; i < CFArrayGetCount(methodRefs); i ++ ) {
+            TISInputSourceRef method = (TISInputSourceRef)(CFArrayGetValueAtIndex(methodRefs, i));
+            CFBooleanRef selected = TISGetInputSourceProperty(method, kTISPropertyInputSourceIsSelected);
+            if (CFBooleanGetValue(selected) == YES) {
+                currentMethod = getLayoutName(method);
+                break;
+            }
+        }
+
+        CFRelease(methodRefs);
     }
-
-    for (int i = 0; i < CFArrayGetCount(methodRefs); i++) {
-        TISInputSourceRef method = (TISInputSourceRef)(CFArrayGetValueAtIndex(methodRefs, i));
-        [methods addObject:getLayoutName(method)];
-    }
-
-    CFRelease(methodRefs);
-
-    [skin pushNSObject:methods];
+    [skin pushNSObject:currentMethod];
     return 1;
-
-
 }
 
 /// hs.keycodes.setLayout(layoutName) -> boolean
@@ -391,17 +487,18 @@ static int keycodes_setLayout(lua_State* L) {
     CFArrayRef layoutRefs = getAllLayouts();
     BOOL found = NO;
 
-    for (int i = 0; i < CFArrayGetCount(layoutRefs); i++) {
-        TISInputSourceRef layout = (TISInputSourceRef)(CFArrayGetValueAtIndex(layoutRefs, i));
-        NSString *layoutName = getLayoutName(layout);
+    if (layoutRefs) {
+        for (int i = 0; i < CFArrayGetCount(layoutRefs); i++) {
+            TISInputSourceRef layout = (TISInputSourceRef)(CFArrayGetValueAtIndex(layoutRefs, i));
+            NSString *layoutName = getLayoutName(layout);
 
-        if ([layoutName isEqualToString:desiredLayout] && TISSelectInputSource(layout) == noErr) {
-            found = YES;
+            if ([layoutName isEqualToString:desiredLayout] && TISSelectInputSource(layout) == noErr) {
+                found = YES;
+            }
         }
+
+        CFRelease(layoutRefs);
     }
-
-    CFRelease(layoutRefs);
-
     lua_pushboolean(L, found);
     return 1;
 }
@@ -422,17 +519,18 @@ static int keycodes_setMethod(lua_State* L) {
     CFArrayRef layoutRefs = getAllInputMethods();
     BOOL found = NO;
 
-    for (int i = 0; i < CFArrayGetCount(layoutRefs); i++) {
-        TISInputSourceRef layout = (TISInputSourceRef)(CFArrayGetValueAtIndex(layoutRefs, i));
-        NSString *layoutName = getLayoutName(layout);
+    if (layoutRefs) {
+        for (int i = 0; i < CFArrayGetCount(layoutRefs); i++) {
+            TISInputSourceRef layout = (TISInputSourceRef)(CFArrayGetValueAtIndex(layoutRefs, i));
+            NSString *layoutName = getLayoutName(layout);
 
-        if ([layoutName isEqualToString:desiredLayout] && TISSelectInputSource(layout) == noErr) {
-            found = YES;
+            if ([layoutName isEqualToString:desiredLayout] && TISSelectInputSource(layout) == noErr) {
+                found = YES;
+            }
         }
+
+        CFRelease(layoutRefs);
     }
-
-    CFRelease(layoutRefs);
-
     lua_pushboolean(L, found);
     return 1;
 }
@@ -457,20 +555,9 @@ static int keycodes_getIcon(lua_State* L) {
     CFArrayRef methodRefs = getAllInputMethods();
     BOOL found = NO;
 
-    for (int i = 0; i < CFArrayGetCount(layoutRefs); i++) {
-        TISInputSourceRef layout = (TISInputSourceRef)(CFArrayGetValueAtIndex(layoutRefs, i));
-        NSString *layoutName = getLayoutName(layout);
-
-        if ([layoutName isEqualToString:sourceName]) {
-            pushSourceIcon(layout);
-            found = YES;
-            break;
-        }
-    }
-
-    if (!found) {
-        for (int i = 0; i < CFArrayGetCount(methodRefs); i++) {
-            TISInputSourceRef layout = (TISInputSourceRef)(CFArrayGetValueAtIndex(methodRefs, i));
+    if (layoutRefs) {
+        for (int i = 0; i < CFArrayGetCount(layoutRefs); i++) {
+            TISInputSourceRef layout = (TISInputSourceRef)(CFArrayGetValueAtIndex(layoutRefs, i));
             NSString *layoutName = getLayoutName(layout);
 
             if ([layoutName isEqualToString:sourceName]) {
@@ -480,13 +567,27 @@ static int keycodes_getIcon(lua_State* L) {
             }
         }
     }
+    if (!found) {
+        if (methodRefs) {
+            for (int i = 0; i < CFArrayGetCount(methodRefs); i++) {
+                TISInputSourceRef layout = (TISInputSourceRef)(CFArrayGetValueAtIndex(methodRefs, i));
+                NSString *layoutName = getLayoutName(layout);
+
+                if ([layoutName isEqualToString:sourceName]) {
+                    pushSourceIcon(layout);
+                    found = YES;
+                    break;
+                }
+            }
+        }
+    }
 
     if (!found) {
         lua_pushnil(L);
     }
 
-    CFRelease(layoutRefs);
-    CFRelease(methodRefs);
+    if (layoutRefs) CFRelease(layoutRefs);
+    if (methodRefs) CFRelease(methodRefs);
 
     return 1;
 }
@@ -508,11 +609,13 @@ static const luaL_Reg keycodeslib[] = {
     {"_cachemap", keycodes_cachemap},
     {"currentLayout", keycodes_currentLayout},
     {"currentLayoutIcon", keycodes_currentLayoutIcon},
+    {"currentMethod", keycodes_currentMethod},
     {"layouts", keycodes_layouts},
     {"methods", keycodes_methods},
     {"setLayout", keycodes_setLayout},
     {"setMethod", keycodes_setMethod},
     {"iconForLayoutOrMethod", keycodes_getIcon},
+    {"currentSourceID", keycodes_sourceID},
 
     {NULL, NULL}
 };

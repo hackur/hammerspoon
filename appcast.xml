@@ -6,6 +6,97 @@
         <description>Most recent changes with links to updates.</description>
         <language>en</language>
          <item>
+            <title>Version 0.9.54</title>
+            <sparkle:releaseNotesLink>
+                http://www.hammerspoon.org/releasenotes/0.9.54.html
+            </sparkle:releaseNotesLink>
+            <pubDate>Wed, 26 Apr 2017 13:06:00 +0100</pubDate>
+            <enclosure url="https://github.com/Hammerspoon/hammerspoon/releases/download/0.9.54/Hammerspoon-0.9.54.zip"
+                sparkle:version="0.9.54"
+                length="5824611"
+                type="application/octet-stream"
+            />
+            <sparkle:minimumSystemVersion>10.10</sparkle:minimumSystemVersion>
+        </item>
+         <item>
+            <title>Version 0.9.53</title>
+            <sparkle:releaseNotesLink>
+                http://www.hammerspoon.org/releasenotes/0.9.53.html
+            </sparkle:releaseNotesLink>
+            <pubDate>Mon, 24 Apr 2017 19:16:16 +0100</pubDate>
+            <enclosure url="https://github.com/Hammerspoon/hammerspoon/releases/download/0.9.53/Hammerspoon-0.9.53.zip"
+                sparkle:version="0.9.53"
+                length="5824198"
+                type="application/octet-stream"
+            />
+            <sparkle:minimumSystemVersion>10.10</sparkle:minimumSystemVersion>
+        </item>
+         <item>
+            <title>Version 0.9.52</title>
+            <sparkle:releaseNotesLink>
+                http://www.hammerspoon.org/releasenotes/0.9.52.html
+            </sparkle:releaseNotesLink>
+            <pubDate>Thu, 29 Dec 2016 20:54:43 +0100</pubDate>
+            <enclosure url="https://github.com/Hammerspoon/hammerspoon/releases/download/0.9.52/Hammerspoon-0.9.52.zip"
+                sparkle:version="0.9.52"
+                length="5332321"
+                type="application/octet-stream"
+            />
+            <sparkle:minimumSystemVersion>10.10</sparkle:minimumSystemVersion>
+        </item>
+         <item>
+            <title>Version 0.9.51</title>
+            <sparkle:releaseNotesLink>
+                http://www.hammerspoon.org/releasenotes/0.9.51.html
+            </sparkle:releaseNotesLink>
+            <pubDate>Mon, 26 Dec 2016 00:10:37 +0100</pubDate>
+            <enclosure url="https://github.com/Hammerspoon/hammerspoon/releases/download/0.9.51/Hammerspoon-0.9.51.zip"
+                sparkle:version="0.9.51"
+                length="5330189"
+                type="application/octet-stream"
+            />
+            <sparkle:minimumSystemVersion>10.10</sparkle:minimumSystemVersion>
+        </item>
+         <item>
+            <title>Version 0.9.50</title>
+            <sparkle:releaseNotesLink>
+                http://www.hammerspoon.org/releasenotes/0.9.50.html
+            </sparkle:releaseNotesLink>
+            <pubDate>Thu, 17 Nov 2016 20:26:32 +0000</pubDate>
+            <enclosure url="https://github.com/Hammerspoon/hammerspoon/releases/download/0.9.50/Hammerspoon-0.9.50.zip"
+                sparkle:version="0.9.50"
+                length="5064526"
+                type="application/octet-stream"
+            />
+            <sparkle:minimumSystemVersion>10.10</sparkle:minimumSystemVersion>
+        </item>
+         <item>
+            <title>Version 0.9.49</title>
+            <sparkle:releaseNotesLink>
+                http://www.hammerspoon.org/releasenotes/0.9.49.html
+            </sparkle:releaseNotesLink>
+            <pubDate>Tue, 15 Nov 2016 16:39:05 +0000</pubDate>
+            <enclosure url="https://github.com/Hammerspoon/hammerspoon/releases/download/0.9.49/Hammerspoon-0.9.49.zip"
+                sparkle:version="0.9.49"
+                length="5040357"
+                type="application/octet-stream"
+            />
+            <sparkle:minimumSystemVersion>10.10</sparkle:minimumSystemVersion>
+        </item>
+         <item>
+            <title>Version 0.9.48</title>
+            <sparkle:releaseNotesLink>
+                http://www.hammerspoon.org/releasenotes/0.9.48.html
+            </sparkle:releaseNotesLink>
+            <pubDate>Tue, 27 Sep 2016 21:18:07 +0100</pubDate>
+            <enclosure url="https://github.com/Hammerspoon/hammerspoon/releases/download/0.9.48/Hammerspoon-0.9.48.zip"
+                sparkle:version="0.9.48"
+                length="4978042"
+                type="application/octet-stream"
+            />
+            <sparkle:minimumSystemVersion>10.10</sparkle:minimumSystemVersion>
+        </item>
+         <item>
             <title>Version 0.9.47</title>
             <sparkle:releaseNotesLink>
                 http://www.hammerspoon.org/releasenotes/0.9.47.html

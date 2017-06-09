@@ -1,19 +1,21 @@
 language: objective-c
-osx_image: xcode7.3
+osx_image: xcode8.2
 before_install:
-  - gem install github-markdown xcpretty-travis-formatter
+  - gem install xcpretty
+  - gem install xcpretty-travis-profiler-formatter
+  - pip install -r requirements.txt
 before_script:
   - make docs
-  - sudo sqlite3 /Library/Application\ Support/com.apple.TCC/TCC.db "INSERT INTO access VALUES('kTCCServiceAccessibility','org.hammerspoon.Hammerspoon',0,1,1,NULL,NULL);"
-  - sudo sqlite3 /Library/Application\ Support/com.apple.TCC/TCC.db "INSERT INTO access VALUES('kTCCServiceAccessibility','com.apple.dt.Xcode-Helper',0,1,1,NULL,NULL);"
-xcode_workspace: Hammerspoon.xcworkspace
-xcode_scheme: Release
 script:
-  - set -o pipefail ; xcodebuild -workspace Hammerspoon.xcworkspace -scheme Release build test GCC_INSTRUMENT_PROGRAM_FLOW_ARCS=YES GCC_GENERATE_TEST_COVERAGE_FILES=YES | xcpretty -f `xcpretty-travis-formatter`
+  - scripts/travis-build.sh build
+  - scripts/travis-build.sh test
 after_script:
   - make build/html
 after_success:
-  - bash <(curl -s https://codecov.io/bash)
+  - bash <(curl -s https://codecov.io/bash) >$HOME/codecov.log 2>&1
+after_failure:
+  - tail -500 $HOME/build.log
+  - tail -500 $HOME/test.log
 notifications:
   irc:
     channels:
@@ -22,3 +24,16 @@ notifications:
       - "%{author} @ %{repository} / %{branch} - Build:#%{build_number} : %{message} - Changes: %{compare_url} - Build details: %{build_url}"
     use_notice: true
     skip_join: true
+addons:
+  artifacts:
+    s3_region: "eu-west-1"
+    bucket: hammerspoontravisartifacts
+    key:
+      secure: "HJ4xnVX6PbU+H/baT2qEAzkAKi5H3LBTDgrYEGAJ77yxB6fJbyKz19Es+pCVsD1Bqv/cNS44MiVhL8oxGmLZovdCzZeDnir578qzUKiTNAfw2WoCOGmf8Jwp5gD726mCnpLtqefiHADK9VQ53p/0DxWMNAdPAqivG8G+fbd7D+Q="
+    secret:
+      secure: "DKxRobGmQWTxQeWNsDMWORe4FBBH8tdtlT43FTSX5/pIoJAfxBV18EHwliI2YRrxtm0kcpsZJ8rf7oeRgezPuKD2auu2CQIxVapVnOG8Lz6wEM8aHVq9OT4jbTusn1m/slKHKe8sjyJanH9thSxe3w1Q8evXzPdRUtnskXAs7Vg="
+    paths:
+      - $HOME/build.log
+      - $HOME/test.log
+      - $HOME/codecov.log
+    target_paths: logs/$TRAVIS_BUILD_NUMBER

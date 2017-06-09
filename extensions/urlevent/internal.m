@@ -128,7 +128,7 @@ static HSURLEventHandler *eventHandler;
     [skin pushNSObject:[url scheme]];
     [skin pushNSObject:[url host]];
     [skin pushNSObject:pairs];
-    [skin pushNSObject:[url absoluteURL]];
+    [skin pushNSObject:[url absoluteString]];
 
     if (![skin protectedCallAndTraceback:4 nresults:0]) {
         const char *errorMsg = lua_tostring(skin.L, -1);
@@ -193,8 +193,8 @@ static int urleventsetDefaultHandler(lua_State *L) {
 
     OSStatus status;
     NSString *scheme = [[NSString stringWithUTF8String:lua_tostring(L, 1)] lowercaseString];
-    NSString *bundleID = @"org.hammerspoon.Hammerspoon";
-
+    NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier];
+    
     if (lua_type(L, 2) == LUA_TSTRING) {
         bundleID = [NSString stringWithUTF8String:lua_tostring(L, 2)];
     }

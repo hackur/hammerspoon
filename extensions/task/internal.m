@@ -124,11 +124,18 @@ void create_task(task_userdata_t *userData) {
             NSFileHandle *stdErrFH = [task.standardError fileHandleForReading];
             NSFileHandle *stdInFH = [task.standardInput fileHandleForWriting];
 
-            NSString *stdOut = [[NSString alloc] initWithData:[stdOutFH readDataToEndOfFile] encoding:NSUTF8StringEncoding];
-            NSString *stdErr = [[NSString alloc] initWithData:[stdErrFH readDataToEndOfFile] encoding:NSUTF8StringEncoding];
+            NSString *stdOut = nil;
+            NSString *stdErr = nil;
 
-            [stdOutFH closeFile];
-            [stdErrFH closeFile];
+            @try {
+                stdOut = [[NSString alloc] initWithData:[stdOutFH readDataToEndOfFile] encoding:NSUTF8StringEncoding];
+                stdErr = [[NSString alloc] initWithData:[stdErrFH readDataToEndOfFile] encoding:NSUTF8StringEncoding];
+            } @catch (NSException *exception) {
+                [skin logWarn:[NSString stringWithFormat:@"hs.task terminationHandler block encountered an exception: %@", exception.description]];
+            } @finally {
+                [stdOutFH closeFile];
+                [stdErrFH closeFile];
+            }
 
             userData = userDataFromNSTask(task);
 
@@ -181,6 +188,9 @@ void create_task(task_userdata_t *userData) {
 ///
 /// Returns:
 ///  * An `hs.task` object
+///
+/// Notes:
+///  * The arguments are not processed via a shell, so you do not need to do any quoting or escaping. They are passed to the executable exactly as provided.
 static int task_new(lua_State *L) {
     // Check our arguments
     LuaSkin *skin = [LuaSkin shared];
@@ -933,7 +943,13 @@ int luaopen_hs_task_internal(lua_State* L) {
                 BOOL continueStreaming = lua_toboolean(L, -1);
 
                 if (continueStreaming) {
-                    [fh readInBackgroundAndNotify];
+                    @try {
+                        [fh readInBackgroundAndNotify];
+                    } @catch (NSException *exception) {
+                        [skin logError:[NSString stringWithFormat:@"hs.task:setStreamCallback() post-callback background reading threw an exception. Please file a bug saying: %@", exception.description]];
+                    } @finally {
+                        ;
+                    }
                 }
             }
             lua_pop(L, 1); // result or error

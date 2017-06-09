@@ -53,80 +53,6 @@ require("hs.image")
 
 -- private variables and methods -----------------------------------------
 
-local _kMetaTable = {}
-_kMetaTable._k = setmetatable({}, {__mode = "k"})
-_kMetaTable._t = setmetatable({}, {__mode = "k"})
-_kMetaTable.__index = function(obj, key)
-        if _kMetaTable._k[obj] then
-            if _kMetaTable._k[obj][key] then
-                return _kMetaTable._k[obj][key]
-            else
-                for k,v in pairs(_kMetaTable._k[obj]) do
-                    if v == key then return k end
-                end
-            end
-        end
-        return nil
-    end
-_kMetaTable.__newindex = function(obj, key, value)
-        error("attempt to modify a table of constants",2)
-        return nil
-    end
-_kMetaTable.__pairs = function(obj) return pairs(_kMetaTable._k[obj]) end
-_kMetaTable.__len = function(obj) return #_kMetaTable._k[obj] end
-_kMetaTable.__tostring = function(obj)
-        local result = ""
-        if _kMetaTable._k[obj] then
-            local width = 0
-            for k,v in pairs(_kMetaTable._k[obj]) do width = width < #tostring(k) and #tostring(k) or width end
-            for k,v in require("hs.fnutils").sortByKeys(_kMetaTable._k[obj]) do
-                if _kMetaTable._t[obj] == "table" then
-                    result = result..string.format("%-"..tostring(width).."s %s\n", tostring(k),
-                        ((type(v) == "table") and "{ table }" or tostring(v)))
-                else
-                    result = result..((type(v) == "table") and "{ table }" or tostring(v)).."\n"
-                end
-            end
-        else
-            result = "constants table missing"
-        end
-        return result
-    end
-_kMetaTable.__metatable = _kMetaTable -- go ahead and look, but don't unset this
-
-local _makeConstantsTable
-_makeConstantsTable = function(theTable)
-    if type(theTable) ~= "table" then
-        local dbg = debug.getinfo(2)
-        local msg = dbg.short_src..":"..dbg.currentline..": attempting to make a '"..type(theTable).."' into a constant table"
-        if module.log then module.log.ef(msg) else print(msg) end
-        return theTable
-    end
-    for k,v in pairs(theTable) do
-        if type(v) == "table" then
-            local count = 0
-            for a,b in pairs(v) do count = count + 1 end
-            local results = _makeConstantsTable(v)
-            if #v > 0 and #v == count then
-                _kMetaTable._t[results] = "array"
-            else
-                _kMetaTable._t[results] = "table"
-            end
-            theTable[k] = results
-        end
-    end
-    local results = setmetatable({}, _kMetaTable)
-    _kMetaTable._k[results] = theTable
-    local count = 0
-    for a,b in pairs(theTable) do count = count + 1 end
-    if #theTable > 0 and #theTable == count then
-        _kMetaTable._t[results] = "array"
-    else
-        _kMetaTable._t[results] = "table"
-    end
-    return results
-end
-
 local deprecatedWarningsGiven = {}
 local deprecatedWarningCheck = function(oldName, newName)
     if not deprecatedWarningsGiven[oldName] then
@@ -137,8 +63,8 @@ end
 
 -- Public interface ------------------------------------------------------
 
-module.windowMasks     = _makeConstantsTable(module.windowMasks)
-module.certificateOIDs = _makeConstantsTable(module.certificateOIDs)
+module.windowMasks     = ls.makeConstantsTable(module.windowMasks)
+module.certificateOIDs = ls.makeConstantsTable(module.certificateOIDs)
 
 -- allow array-like usage of object to return child webviews
 objectMT.__index = function(self, _)
@@ -178,7 +104,7 @@ module.newBrowser = function(...)
                           :allowGestures(true)
 end
 
---- hs.webview:toolbar([toolbar | nil]) -> webviewObject | currentValue
+--- hs.webview:attachedToolbar([toolbar | nil]) -> webviewObject | currentValue
 --- Method
 --- Get or attach/detach a toolbar to/from the webview.
 ---
@@ -192,7 +118,7 @@ end
 ---  * this method is a convenience wrapper for the `hs.webview.toolbar.attachToolbar` function.
 ---
 ---  * If the toolbarObject is currently attached to another window when this method is called, it will be detached from the original window and attached to the webview.  If you wish to attach the same toolbar to multiple webviews, see `hs.webview.toolbar:copy`.
-objectMT.toolbar = module.toolbar.attachToolbar
+objectMT.attachedToolbar = module.toolbar.attachToolbar
 
 --- hs.webview:windowStyle(mask) -> webviewObject | currentMask
 --- Method
@@ -285,6 +211,42 @@ objectMT.delete = function(self, propagate, delay)
     end
 
     return objectMT._delete(self, delay)
+end
+
+--- hs.webview:frame([rect]) -> webviewObject | currentValue
+--- Method
+--- Get or set the frame of the webview window.
+---
+--- Parameters:
+---  * rect - An optional rect-table containing the co-ordinates and size the webview window should be moved and set to
+---
+--- Returns:
+---  * If an argument is provided, the webview object; otherwise the current value.
+---
+--- Notes:
+---  * a rect-table is a table with key-value pairs specifying the new top-left coordinate on the screen of the webview window (keys `x`  and `y`) and the new size (keys `h` and `w`).  The table may be crafted by any method which includes these keys, including the use of an `hs.geometry` object.
+objectMT.frame = function(obj, ...)
+    local args = table.pack(...)
+
+    if args.n == 0 then
+        local topLeft = obj:topLeft()
+        local size    = obj:size()
+        return {
+            __luaSkinType = "NSRect",
+            x = topLeft.x,
+            y = topLeft.y,
+            h = size.h,
+            w = size.w,
+        }
+    elseif args.n == 1 and type(args[1]) == "table" then
+        obj:size(args[1])
+        obj:topLeft(args[1])
+        return obj
+    elseif args.n > 1 then
+        error("frame method expects 0 or 1 arguments", 2)
+    else
+        error("frame method argument must be a table", 2)
+    end
 end
 
 --- hs.webview:urlParts() -> table

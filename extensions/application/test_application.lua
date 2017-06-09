@@ -1,3 +1,6 @@
+hs.application = require("hs.application")
+hs.dockicon = require("hs.dockicon")
+
 function testAttributesFromBundleID()
   local appName = "Safari"
   local appPath = "/Applications/Safari.app"

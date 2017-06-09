@@ -1,3 +1,5 @@
+hs.alert = require("hs.alert")
+
 function testAlert()
   hs.alert.show("Test alert 1")
   hs.alert("Test alert 2", 20)

@@ -10,6 +10,13 @@
 
 #define USERDATA_TAG "hs.image"
 
+// NSWorkspace iconForFile: logs a warning every time you try to query when the path is nil.  Since
+// this happens a lot when trying to query based on a file bundle it means anything using spotlight
+// to gather file info and then uses this to get an icon can spam the system logs.  let's get it once
+// and be done with it. (and while there is a NSImageNameMultipleDocuments, I can't seem to find one
+// for a single document image...
+static NSImage *missingIconForFile ;
+
 #pragma mark - Module Constants
 
 /// hs.image.systemImageNames[]
@@ -20,66 +27,309 @@
 ///  * Image names pulled from NSImage.h
 ///  * This table has a __tostring() metamethod which allows listing it's contents in the Hammerspoon console by typing `hs.image.systemImageNames`.
 static int pushNSImageNameTable(lua_State *L) {
+    LuaSkin *skin = [LuaSkin shared] ;
     lua_newtable(L) ;
-        lua_pushstring(L, [NSImageNameQuickLookTemplate UTF8String]) ;                lua_setfield(L, -2, "QuickLookTemplate") ;
-        lua_pushstring(L, [NSImageNameBluetoothTemplate UTF8String]) ;                lua_setfield(L, -2, "BluetoothTemplate") ;
-        lua_pushstring(L, [NSImageNameIChatTheaterTemplate UTF8String]) ;             lua_setfield(L, -2, "IChatTheaterTemplate") ;
-        lua_pushstring(L, [NSImageNameSlideshowTemplate UTF8String]) ;                lua_setfield(L, -2, "SlideshowTemplate") ;
-        lua_pushstring(L, [NSImageNameActionTemplate UTF8String]) ;                   lua_setfield(L, -2, "ActionTemplate") ;
-        lua_pushstring(L, [NSImageNameSmartBadgeTemplate UTF8String]) ;               lua_setfield(L, -2, "SmartBadgeTemplate") ;
-        lua_pushstring(L, [NSImageNameIconViewTemplate UTF8String]) ;                 lua_setfield(L, -2, "IconViewTemplate") ;
-        lua_pushstring(L, [NSImageNameListViewTemplate UTF8String]) ;                 lua_setfield(L, -2, "ListViewTemplate") ;
-        lua_pushstring(L, [NSImageNameColumnViewTemplate UTF8String]) ;               lua_setfield(L, -2, "ColumnViewTemplate") ;
-        lua_pushstring(L, [NSImageNameFlowViewTemplate UTF8String]) ;                 lua_setfield(L, -2, "FlowViewTemplate") ;
-        lua_pushstring(L, [NSImageNamePathTemplate UTF8String]) ;                     lua_setfield(L, -2, "PathTemplate") ;
-        lua_pushstring(L, [NSImageNameInvalidDataFreestandingTemplate UTF8String]) ;  lua_setfield(L, -2, "InvalidDataFreestandingTemplate") ;
-        lua_pushstring(L, [NSImageNameLockLockedTemplate UTF8String]) ;               lua_setfield(L, -2, "LockLockedTemplate") ;
-        lua_pushstring(L, [NSImageNameLockUnlockedTemplate UTF8String]) ;             lua_setfield(L, -2, "LockUnlockedTemplate") ;
-        lua_pushstring(L, [NSImageNameGoRightTemplate UTF8String]) ;                  lua_setfield(L, -2, "GoRightTemplate") ;
-        lua_pushstring(L, [NSImageNameGoLeftTemplate UTF8String]) ;                   lua_setfield(L, -2, "GoLeftTemplate") ;
-        lua_pushstring(L, [NSImageNameRightFacingTriangleTemplate UTF8String]) ;      lua_setfield(L, -2, "RightFacingTriangleTemplate") ;
-        lua_pushstring(L, [NSImageNameLeftFacingTriangleTemplate UTF8String]) ;       lua_setfield(L, -2, "LeftFacingTriangleTemplate") ;
-        lua_pushstring(L, [NSImageNameAddTemplate UTF8String]) ;                      lua_setfield(L, -2, "AddTemplate") ;
-        lua_pushstring(L, [NSImageNameRemoveTemplate UTF8String]) ;                   lua_setfield(L, -2, "RemoveTemplate") ;
-        lua_pushstring(L, [NSImageNameRevealFreestandingTemplate UTF8String]) ;       lua_setfield(L, -2, "RevealFreestandingTemplate") ;
-        lua_pushstring(L, [NSImageNameFollowLinkFreestandingTemplate UTF8String]) ;   lua_setfield(L, -2, "FollowLinkFreestandingTemplate") ;
-        lua_pushstring(L, [NSImageNameEnterFullScreenTemplate UTF8String]) ;          lua_setfield(L, -2, "EnterFullScreenTemplate") ;
-        lua_pushstring(L, [NSImageNameExitFullScreenTemplate UTF8String]) ;           lua_setfield(L, -2, "ExitFullScreenTemplate") ;
-        lua_pushstring(L, [NSImageNameStopProgressTemplate UTF8String]) ;             lua_setfield(L, -2, "StopProgressTemplate") ;
-        lua_pushstring(L, [NSImageNameStopProgressFreestandingTemplate UTF8String]) ; lua_setfield(L, -2, "StopProgressFreestandingTemplate") ;
-        lua_pushstring(L, [NSImageNameRefreshTemplate UTF8String]) ;                  lua_setfield(L, -2, "RefreshTemplate") ;
-        lua_pushstring(L, [NSImageNameRefreshFreestandingTemplate UTF8String]) ;      lua_setfield(L, -2, "RefreshFreestandingTemplate") ;
-        lua_pushstring(L, [NSImageNameBonjour UTF8String]) ;                          lua_setfield(L, -2, "Bonjour") ;
-        lua_pushstring(L, [NSImageNameComputer UTF8String]) ;                         lua_setfield(L, -2, "Computer") ;
-        lua_pushstring(L, [NSImageNameFolderBurnable UTF8String]) ;                   lua_setfield(L, -2, "FolderBurnable") ;
-        lua_pushstring(L, [NSImageNameFolderSmart UTF8String]) ;                      lua_setfield(L, -2, "FolderSmart") ;
-        lua_pushstring(L, [NSImageNameFolder UTF8String]) ;                           lua_setfield(L, -2, "Folder") ;
-        lua_pushstring(L, [NSImageNameNetwork UTF8String]) ;                          lua_setfield(L, -2, "Network") ;
-        lua_pushstring(L, [NSImageNameMobileMe UTF8String]) ;                         lua_setfield(L, -2, "MobileMe") ;
-        lua_pushstring(L, [NSImageNameMultipleDocuments UTF8String]) ;                lua_setfield(L, -2, "MultipleDocuments") ;
-        lua_pushstring(L, [NSImageNameUserAccounts UTF8String]) ;                     lua_setfield(L, -2, "UserAccounts") ;
-        lua_pushstring(L, [NSImageNamePreferencesGeneral UTF8String]) ;               lua_setfield(L, -2, "PreferencesGeneral") ;
-        lua_pushstring(L, [NSImageNameAdvanced UTF8String]) ;                         lua_setfield(L, -2, "Advanced") ;
-        lua_pushstring(L, [NSImageNameInfo UTF8String]) ;                             lua_setfield(L, -2, "Info") ;
-        lua_pushstring(L, [NSImageNameFontPanel UTF8String]) ;                        lua_setfield(L, -2, "FontPanel") ;
-        lua_pushstring(L, [NSImageNameColorPanel UTF8String]) ;                       lua_setfield(L, -2, "ColorPanel") ;
-        lua_pushstring(L, [NSImageNameUser UTF8String]) ;                             lua_setfield(L, -2, "User") ;
-        lua_pushstring(L, [NSImageNameUserGroup UTF8String]) ;                        lua_setfield(L, -2, "UserGroup") ;
-        lua_pushstring(L, [NSImageNameEveryone UTF8String]) ;                         lua_setfield(L, -2, "Everyone") ;
-        lua_pushstring(L, [NSImageNameUserGuest UTF8String]) ;                        lua_setfield(L, -2, "UserGuest") ;
-        lua_pushstring(L, [NSImageNameMenuOnStateTemplate UTF8String]) ;              lua_setfield(L, -2, "MenuOnStateTemplate") ;
-        lua_pushstring(L, [NSImageNameMenuMixedStateTemplate UTF8String]) ;           lua_setfield(L, -2, "MenuMixedStateTemplate") ;
-        lua_pushstring(L, [NSImageNameApplicationIcon UTF8String]) ;                  lua_setfield(L, -2, "ApplicationIcon") ;
-        lua_pushstring(L, [NSImageNameTrashEmpty UTF8String]) ;                       lua_setfield(L, -2, "TrashEmpty") ;
-        lua_pushstring(L, [NSImageNameTrashFull UTF8String]) ;                        lua_setfield(L, -2, "TrashFull") ;
-        lua_pushstring(L, [NSImageNameHomeTemplate UTF8String]) ;                     lua_setfield(L, -2, "HomeTemplate") ;
-        lua_pushstring(L, [NSImageNameBookmarksTemplate UTF8String]) ;                lua_setfield(L, -2, "BookmarksTemplate") ;
-        lua_pushstring(L, [NSImageNameCaution UTF8String]) ;                          lua_setfield(L, -2, "Caution") ;
-        lua_pushstring(L, [NSImageNameStatusAvailable UTF8String]) ;                  lua_setfield(L, -2, "StatusAvailable") ;
-        lua_pushstring(L, [NSImageNameStatusPartiallyAvailable UTF8String]) ;         lua_setfield(L, -2, "StatusPartiallyAvailable") ;
-        lua_pushstring(L, [NSImageNameStatusUnavailable UTF8String]) ;                lua_setfield(L, -2, "StatusUnavailable") ;
-        lua_pushstring(L, [NSImageNameStatusNone UTF8String]) ;                       lua_setfield(L, -2, "StatusNone") ;
-        lua_pushstring(L, [NSImageNameShareTemplate UTF8String]) ;                    lua_setfield(L, -2, "ShareTemplate") ;
+        [skin pushNSObject:NSImageNameQuickLookTemplate] ;                       lua_setfield(L, -2, "QuickLookTemplate") ;
+        [skin pushNSObject:NSImageNameBluetoothTemplate] ;                       lua_setfield(L, -2, "BluetoothTemplate") ;
+        [skin pushNSObject:NSImageNameIChatTheaterTemplate] ;                    lua_setfield(L, -2, "IChatTheaterTemplate") ;
+        [skin pushNSObject:NSImageNameSlideshowTemplate] ;                       lua_setfield(L, -2, "SlideshowTemplate") ;
+        [skin pushNSObject:NSImageNameActionTemplate] ;                          lua_setfield(L, -2, "ActionTemplate") ;
+        [skin pushNSObject:NSImageNameSmartBadgeTemplate] ;                      lua_setfield(L, -2, "SmartBadgeTemplate") ;
+        [skin pushNSObject:NSImageNameIconViewTemplate] ;                        lua_setfield(L, -2, "IconViewTemplate") ;
+        [skin pushNSObject:NSImageNameListViewTemplate] ;                        lua_setfield(L, -2, "ListViewTemplate") ;
+        [skin pushNSObject:NSImageNameColumnViewTemplate] ;                      lua_setfield(L, -2, "ColumnViewTemplate") ;
+        [skin pushNSObject:NSImageNameFlowViewTemplate] ;                        lua_setfield(L, -2, "FlowViewTemplate") ;
+        [skin pushNSObject:NSImageNamePathTemplate] ;                            lua_setfield(L, -2, "PathTemplate") ;
+        [skin pushNSObject:NSImageNameInvalidDataFreestandingTemplate] ;         lua_setfield(L, -2, "InvalidDataFreestandingTemplate") ;
+        [skin pushNSObject:NSImageNameLockLockedTemplate] ;                      lua_setfield(L, -2, "LockLockedTemplate") ;
+        [skin pushNSObject:NSImageNameLockUnlockedTemplate] ;                    lua_setfield(L, -2, "LockUnlockedTemplate") ;
+// added in 10.12
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpartial-availability"
+    if (&NSImageNameGoForwardTemplate != NULL) {
+        [skin pushNSObject:NSImageNameGoForwardTemplate] ;                       lua_setfield(L, -2, "GoForwardTemplate") ;
+    }
+    if (&NSImageNameGoBackTemplate != NULL) {
+        [skin pushNSObject:NSImageNameGoBackTemplate] ;                          lua_setfield(L, -2, "GoBackTemplate") ;
+    }
+#pragma clang diagnostic pop
+        [skin pushNSObject:NSImageNameGoRightTemplate] ;                         lua_setfield(L, -2, "GoRightTemplate") ;
+        [skin pushNSObject:NSImageNameGoLeftTemplate] ;                          lua_setfield(L, -2, "GoLeftTemplate") ;
+        [skin pushNSObject:NSImageNameRightFacingTriangleTemplate] ;             lua_setfield(L, -2, "RightFacingTriangleTemplate") ;
+        [skin pushNSObject:NSImageNameLeftFacingTriangleTemplate] ;              lua_setfield(L, -2, "LeftFacingTriangleTemplate") ;
+        [skin pushNSObject:NSImageNameAddTemplate] ;                             lua_setfield(L, -2, "AddTemplate") ;
+        [skin pushNSObject:NSImageNameRemoveTemplate] ;                          lua_setfield(L, -2, "RemoveTemplate") ;
+        [skin pushNSObject:NSImageNameRevealFreestandingTemplate] ;              lua_setfield(L, -2, "RevealFreestandingTemplate") ;
+        [skin pushNSObject:NSImageNameFollowLinkFreestandingTemplate] ;          lua_setfield(L, -2, "FollowLinkFreestandingTemplate") ;
+        [skin pushNSObject:NSImageNameEnterFullScreenTemplate] ;                 lua_setfield(L, -2, "EnterFullScreenTemplate") ;
+        [skin pushNSObject:NSImageNameExitFullScreenTemplate] ;                  lua_setfield(L, -2, "ExitFullScreenTemplate") ;
+        [skin pushNSObject:NSImageNameStopProgressTemplate] ;                    lua_setfield(L, -2, "StopProgressTemplate") ;
+        [skin pushNSObject:NSImageNameStopProgressFreestandingTemplate] ;        lua_setfield(L, -2, "StopProgressFreestandingTemplate") ;
+        [skin pushNSObject:NSImageNameRefreshTemplate] ;                         lua_setfield(L, -2, "RefreshTemplate") ;
+        [skin pushNSObject:NSImageNameRefreshFreestandingTemplate] ;             lua_setfield(L, -2, "RefreshFreestandingTemplate") ;
+        [skin pushNSObject:NSImageNameBonjour] ;                                 lua_setfield(L, -2, "Bonjour") ;
+        [skin pushNSObject:NSImageNameComputer] ;                                lua_setfield(L, -2, "Computer") ;
+        [skin pushNSObject:NSImageNameFolderBurnable] ;                          lua_setfield(L, -2, "FolderBurnable") ;
+        [skin pushNSObject:NSImageNameFolderSmart] ;                             lua_setfield(L, -2, "FolderSmart") ;
+        [skin pushNSObject:NSImageNameFolder] ;                                  lua_setfield(L, -2, "Folder") ;
+        [skin pushNSObject:NSImageNameNetwork] ;                                 lua_setfield(L, -2, "Network") ;
+        [skin pushNSObject:NSImageNameMobileMe] ;                                lua_setfield(L, -2, "MobileMe") ;
+        [skin pushNSObject:NSImageNameMultipleDocuments] ;                       lua_setfield(L, -2, "MultipleDocuments") ;
+        [skin pushNSObject:NSImageNameUserAccounts] ;                            lua_setfield(L, -2, "UserAccounts") ;
+        [skin pushNSObject:NSImageNamePreferencesGeneral] ;                      lua_setfield(L, -2, "PreferencesGeneral") ;
+        [skin pushNSObject:NSImageNameAdvanced] ;                                lua_setfield(L, -2, "Advanced") ;
+        [skin pushNSObject:NSImageNameInfo] ;                                    lua_setfield(L, -2, "Info") ;
+        [skin pushNSObject:NSImageNameFontPanel] ;                               lua_setfield(L, -2, "FontPanel") ;
+        [skin pushNSObject:NSImageNameColorPanel] ;                              lua_setfield(L, -2, "ColorPanel") ;
+        [skin pushNSObject:NSImageNameUser] ;                                    lua_setfield(L, -2, "User") ;
+        [skin pushNSObject:NSImageNameUserGroup] ;                               lua_setfield(L, -2, "UserGroup") ;
+        [skin pushNSObject:NSImageNameEveryone] ;                                lua_setfield(L, -2, "Everyone") ;
+        [skin pushNSObject:NSImageNameUserGuest] ;                               lua_setfield(L, -2, "UserGuest") ;
+        [skin pushNSObject:NSImageNameMenuOnStateTemplate] ;                     lua_setfield(L, -2, "MenuOnStateTemplate") ;
+        [skin pushNSObject:NSImageNameMenuMixedStateTemplate] ;                  lua_setfield(L, -2, "MenuMixedStateTemplate") ;
+        [skin pushNSObject:NSImageNameApplicationIcon] ;                         lua_setfield(L, -2, "ApplicationIcon") ;
+        [skin pushNSObject:NSImageNameTrashEmpty] ;                              lua_setfield(L, -2, "TrashEmpty") ;
+        [skin pushNSObject:NSImageNameTrashFull] ;                               lua_setfield(L, -2, "TrashFull") ;
+        [skin pushNSObject:NSImageNameHomeTemplate] ;                            lua_setfield(L, -2, "HomeTemplate") ;
+        [skin pushNSObject:NSImageNameBookmarksTemplate] ;                       lua_setfield(L, -2, "BookmarksTemplate") ;
+        [skin pushNSObject:NSImageNameCaution] ;                                 lua_setfield(L, -2, "Caution") ;
+        [skin pushNSObject:NSImageNameStatusAvailable] ;                         lua_setfield(L, -2, "StatusAvailable") ;
+        [skin pushNSObject:NSImageNameStatusPartiallyAvailable] ;                lua_setfield(L, -2, "StatusPartiallyAvailable") ;
+        [skin pushNSObject:NSImageNameStatusUnavailable] ;                       lua_setfield(L, -2, "StatusUnavailable") ;
+        [skin pushNSObject:NSImageNameStatusNone] ;                              lua_setfield(L, -2, "StatusNone") ;
+        [skin pushNSObject:NSImageNameShareTemplate] ;                           lua_setfield(L, -2, "ShareTemplate") ;
+// added in 10.12.2
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpartial-availability"
+    if (&NSImageNameTouchBarAddDetailTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarAddDetailTemplate] ;               lua_setfield(L, -2, "TouchBarAddDetailTemplate") ;
+    }
+    if (&NSImageNameTouchBarAddTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarAddTemplate] ;                     lua_setfield(L, -2, "TouchBarAddTemplate") ;
+    }
+    if (&NSImageNameTouchBarAlarmTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarAlarmTemplate] ;                   lua_setfield(L, -2, "TouchBarAlarmTemplate") ;
+    }
+    if (&NSImageNameTouchBarAudioInputMuteTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarAudioInputMuteTemplate] ;          lua_setfield(L, -2, "TouchBarAudioInputMuteTemplate") ;
+    }
+    if (&NSImageNameTouchBarAudioInputTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarAudioInputTemplate] ;              lua_setfield(L, -2, "TouchBarAudioInputTemplate") ;
+    }
+    if (&NSImageNameTouchBarAudioOutputMuteTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarAudioOutputMuteTemplate] ;         lua_setfield(L, -2, "TouchBarAudioOutputMuteTemplate") ;
+    }
+    if (&NSImageNameTouchBarAudioOutputVolumeHighTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarAudioOutputVolumeHighTemplate] ;   lua_setfield(L, -2, "TouchBarAudioOutputVolumeHighTemplate") ;
+    }
+    if (&NSImageNameTouchBarAudioOutputVolumeLowTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarAudioOutputVolumeLowTemplate] ;    lua_setfield(L, -2, "TouchBarAudioOutputVolumeLowTemplate") ;
+    }
+    if (&NSImageNameTouchBarAudioOutputVolumeMediumTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarAudioOutputVolumeMediumTemplate] ; lua_setfield(L, -2, "TouchBarAudioOutputVolumeMediumTemplate") ;
+    }
+    if (&NSImageNameTouchBarAudioOutputVolumeOffTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarAudioOutputVolumeOffTemplate] ;    lua_setfield(L, -2, "TouchBarAudioOutputVolumeOffTemplate") ;
+    }
+    if (&NSImageNameTouchBarBookmarksTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarBookmarksTemplate] ;               lua_setfield(L, -2, "TouchBarBookmarksTemplate") ;
+    }
+    if (&NSImageNameTouchBarColorPickerFill != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarColorPickerFill] ;                 lua_setfield(L, -2, "TouchBarColorPickerFill") ;
+    }
+    if (&NSImageNameTouchBarColorPickerFont != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarColorPickerFont] ;                 lua_setfield(L, -2, "TouchBarColorPickerFont") ;
+    }
+    if (&NSImageNameTouchBarColorPickerStroke != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarColorPickerStroke] ;               lua_setfield(L, -2, "TouchBarColorPickerStroke") ;
+    }
+    if (&NSImageNameTouchBarCommunicationAudioTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarCommunicationAudioTemplate] ;      lua_setfield(L, -2, "TouchBarCommunicationAudioTemplate") ;
+    }
+    if (&NSImageNameTouchBarCommunicationVideoTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarCommunicationVideoTemplate] ;      lua_setfield(L, -2, "TouchBarCommunicationVideoTemplate") ;
+    }
+    if (&NSImageNameTouchBarComposeTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarComposeTemplate] ;                 lua_setfield(L, -2, "TouchBarComposeTemplate") ;
+    }
+    if (&NSImageNameTouchBarDeleteTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarDeleteTemplate] ;                  lua_setfield(L, -2, "TouchBarDeleteTemplate") ;
+    }
+    if (&NSImageNameTouchBarDownloadTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarDownloadTemplate] ;                lua_setfield(L, -2, "TouchBarDownloadTemplate") ;
+    }
+    if (&NSImageNameTouchBarEnterFullScreenTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarEnterFullScreenTemplate] ;         lua_setfield(L, -2, "TouchBarEnterFullScreenTemplate") ;
+    }
+    if (&NSImageNameTouchBarExitFullScreenTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarExitFullScreenTemplate] ;          lua_setfield(L, -2, "TouchBarExitFullScreenTemplate") ;
+    }
+    if (&NSImageNameTouchBarFastForwardTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarFastForwardTemplate] ;             lua_setfield(L, -2, "TouchBarFastForwardTemplate") ;
+    }
+    if (&NSImageNameTouchBarFolderCopyToTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarFolderCopyToTemplate] ;            lua_setfield(L, -2, "TouchBarFolderCopyToTemplate") ;
+    }
+    if (&NSImageNameTouchBarFolderMoveToTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarFolderMoveToTemplate] ;            lua_setfield(L, -2, "TouchBarFolderMoveToTemplate") ;
+    }
+    if (&NSImageNameTouchBarFolderTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarFolderTemplate] ;                  lua_setfield(L, -2, "TouchBarFolderTemplate") ;
+    }
+    if (&NSImageNameTouchBarGetInfoTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarGetInfoTemplate] ;                 lua_setfield(L, -2, "TouchBarGetInfoTemplate") ;
+    }
+    if (&NSImageNameTouchBarGoBackTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarGoBackTemplate] ;                  lua_setfield(L, -2, "TouchBarGoBackTemplate") ;
+    }
+    if (&NSImageNameTouchBarGoDownTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarGoDownTemplate] ;                  lua_setfield(L, -2, "TouchBarGoDownTemplate") ;
+    }
+    if (&NSImageNameTouchBarGoForwardTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarGoForwardTemplate] ;               lua_setfield(L, -2, "TouchBarGoForwardTemplate") ;
+    }
+    if (&NSImageNameTouchBarGoUpTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarGoUpTemplate] ;                    lua_setfield(L, -2, "TouchBarGoUpTemplate") ;
+    }
+    if (&NSImageNameTouchBarHistoryTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarHistoryTemplate] ;                 lua_setfield(L, -2, "TouchBarHistoryTemplate") ;
+    }
+    if (&NSImageNameTouchBarIconViewTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarIconViewTemplate] ;                lua_setfield(L, -2, "TouchBarIconViewTemplate") ;
+    }
+    if (&NSImageNameTouchBarListViewTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarListViewTemplate] ;                lua_setfield(L, -2, "TouchBarListViewTemplate") ;
+    }
+    if (&NSImageNameTouchBarMailTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarMailTemplate] ;                    lua_setfield(L, -2, "TouchBarMailTemplate") ;
+    }
+    if (&NSImageNameTouchBarNewFolderTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarNewFolderTemplate] ;               lua_setfield(L, -2, "TouchBarNewFolderTemplate") ;
+    }
+    if (&NSImageNameTouchBarNewMessageTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarNewMessageTemplate] ;              lua_setfield(L, -2, "TouchBarNewMessageTemplate") ;
+    }
+    if (&NSImageNameTouchBarOpenInBrowserTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarOpenInBrowserTemplate] ;           lua_setfield(L, -2, "TouchBarOpenInBrowserTemplate") ;
+    }
+    if (&NSImageNameTouchBarPauseTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarPauseTemplate] ;                   lua_setfield(L, -2, "TouchBarPauseTemplate") ;
+    }
+    if (&NSImageNameTouchBarPlayheadTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarPlayheadTemplate] ;                lua_setfield(L, -2, "TouchBarPlayheadTemplate") ;
+    }
+    if (&NSImageNameTouchBarPlayPauseTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarPlayPauseTemplate] ;               lua_setfield(L, -2, "TouchBarPlayPauseTemplate") ;
+    }
+    if (&NSImageNameTouchBarPlayTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarPlayTemplate] ;                    lua_setfield(L, -2, "TouchBarPlayTemplate") ;
+    }
+    if (&NSImageNameTouchBarQuickLookTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarQuickLookTemplate] ;               lua_setfield(L, -2, "TouchBarQuickLookTemplate") ;
+    }
+    if (&NSImageNameTouchBarRecordStartTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarRecordStartTemplate] ;             lua_setfield(L, -2, "TouchBarRecordStartTemplate") ;
+    }
+    if (&NSImageNameTouchBarRecordStopTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarRecordStopTemplate] ;              lua_setfield(L, -2, "TouchBarRecordStopTemplate") ;
+    }
+    if (&NSImageNameTouchBarRefreshTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarRefreshTemplate] ;                 lua_setfield(L, -2, "TouchBarRefreshTemplate") ;
+    }
+    if (&NSImageNameTouchBarRewindTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarRewindTemplate] ;                  lua_setfield(L, -2, "TouchBarRewindTemplate") ;
+    }
+    if (&NSImageNameTouchBarRotateLeftTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarRotateLeftTemplate] ;              lua_setfield(L, -2, "TouchBarRotateLeftTemplate") ;
+    }
+    if (&NSImageNameTouchBarRotateRightTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarRotateRightTemplate] ;             lua_setfield(L, -2, "TouchBarRotateRightTemplate") ;
+    }
+    if (&NSImageNameTouchBarSearchTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarSearchTemplate] ;                  lua_setfield(L, -2, "TouchBarSearchTemplate") ;
+    }
+    if (&NSImageNameTouchBarShareTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarShareTemplate] ;                   lua_setfield(L, -2, "TouchBarShareTemplate") ;
+    }
+    if (&NSImageNameTouchBarSidebarTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarSidebarTemplate] ;                 lua_setfield(L, -2, "TouchBarSidebarTemplate") ;
+    }
+    if (&NSImageNameTouchBarSkipAhead15SecondsTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarSkipAhead15SecondsTemplate] ;      lua_setfield(L, -2, "TouchBarSkipAhead15SecondsTemplate") ;
+    }
+    if (&NSImageNameTouchBarSkipAhead30SecondsTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarSkipAhead30SecondsTemplate] ;      lua_setfield(L, -2, "TouchBarSkipAhead30SecondsTemplate") ;
+    }
+    if (&NSImageNameTouchBarSkipAheadTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarSkipAheadTemplate] ;               lua_setfield(L, -2, "TouchBarSkipAheadTemplate") ;
+    }
+    if (&NSImageNameTouchBarSkipBack15SecondsTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarSkipBack15SecondsTemplate] ;       lua_setfield(L, -2, "TouchBarSkipBack15SecondsTemplate") ;
+    }
+    if (&NSImageNameTouchBarSkipBack30SecondsTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarSkipBack30SecondsTemplate] ;       lua_setfield(L, -2, "TouchBarSkipBack30SecondsTemplate") ;
+    }
+    if (&NSImageNameTouchBarSkipBackTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarSkipBackTemplate] ;                lua_setfield(L, -2, "TouchBarSkipBackTemplate") ;
+    }
+    if (&NSImageNameTouchBarSkipToEndTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarSkipToEndTemplate] ;               lua_setfield(L, -2, "TouchBarSkipToEndTemplate") ;
+    }
+    if (&NSImageNameTouchBarSkipToStartTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarSkipToStartTemplate] ;             lua_setfield(L, -2, "TouchBarSkipToStartTemplate") ;
+    }
+    if (&NSImageNameTouchBarSlideshowTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarSlideshowTemplate] ;               lua_setfield(L, -2, "TouchBarSlideshowTemplate") ;
+    }
+    if (&NSImageNameTouchBarTagIconTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarTagIconTemplate] ;                 lua_setfield(L, -2, "TouchBarTagIconTemplate") ;
+    }
+    if (&NSImageNameTouchBarTextBoldTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarTextBoldTemplate] ;                lua_setfield(L, -2, "TouchBarTextBoldTemplate") ;
+    }
+    if (&NSImageNameTouchBarTextBoxTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarTextBoxTemplate] ;                 lua_setfield(L, -2, "TouchBarTextBoxTemplate") ;
+    }
+    if (&NSImageNameTouchBarTextCenterAlignTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarTextCenterAlignTemplate] ;         lua_setfield(L, -2, "TouchBarTextCenterAlignTemplate") ;
+    }
+    if (&NSImageNameTouchBarTextItalicTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarTextItalicTemplate] ;              lua_setfield(L, -2, "TouchBarTextItalicTemplate") ;
+    }
+    if (&NSImageNameTouchBarTextJustifiedAlignTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarTextJustifiedAlignTemplate] ;      lua_setfield(L, -2, "TouchBarTextJustifiedAlignTemplate") ;
+    }
+    if (&NSImageNameTouchBarTextLeftAlignTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarTextLeftAlignTemplate] ;           lua_setfield(L, -2, "TouchBarTextLeftAlignTemplate") ;
+    }
+    if (&NSImageNameTouchBarTextListTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarTextListTemplate] ;                lua_setfield(L, -2, "TouchBarTextListTemplate") ;
+    }
+    if (&NSImageNameTouchBarTextRightAlignTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarTextRightAlignTemplate] ;          lua_setfield(L, -2, "TouchBarTextRightAlignTemplate") ;
+    }
+    if (&NSImageNameTouchBarTextStrikethroughTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarTextStrikethroughTemplate] ;       lua_setfield(L, -2, "TouchBarTextStrikethroughTemplate") ;
+    }
+    if (&NSImageNameTouchBarTextUnderlineTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarTextUnderlineTemplate] ;           lua_setfield(L, -2, "TouchBarTextUnderlineTemplate") ;
+    }
+    if (&NSImageNameTouchBarUserAddTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarUserAddTemplate] ;                 lua_setfield(L, -2, "TouchBarUserAddTemplate") ;
+    }
+    if (&NSImageNameTouchBarUserGroupTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarUserGroupTemplate] ;               lua_setfield(L, -2, "TouchBarUserGroupTemplate") ;
+    }
+    if (&NSImageNameTouchBarUserTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarUserTemplate] ;                    lua_setfield(L, -2, "TouchBarUserTemplate") ;
+    }
+    if (&NSImageNameTouchBarVolumeDownTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarVolumeDownTemplate] ;              lua_setfield(L, -2, "TouchBarVolumeDownTemplate") ;
+    }
+    if (&NSImageNameTouchBarVolumeUpTemplate != NULL) {
+        [skin pushNSObject:NSImageNameTouchBarVolumeUpTemplate] ;                lua_setfield(L, -2, "TouchBarVolumeUpTemplate") ;
+    }
+#pragma clang diagnostic pop
     return 1;
 }
 
@@ -798,7 +1048,7 @@ static int imageFromApp(lua_State *L) {
     LuaSkin *skin = [LuaSkin shared];
     [skin checkArgs:LS_TSTRING, LS_TBREAK];
     NSString *imagePath = [[NSWorkspace sharedWorkspace] absolutePathForAppBundleWithIdentifier:[skin toNSObjectAtIndex:1]];
-    NSImage *iconImage = [[NSWorkspace sharedWorkspace] iconForFile:imagePath];
+    NSImage *iconImage = imagePath ? [[NSWorkspace sharedWorkspace] iconForFile:imagePath] : missingIconForFile ;
 
     if (iconImage) {
         [skin pushNSObject:iconImage];
@@ -959,88 +1209,216 @@ static int imageFromMediaFile(lua_State *L) {
 
 #pragma mark - Module Methods
 
-/// hs.image:name() -> string
+/// hs.image:name([name]) -> imageObject | string
 /// Method
-/// Returns the name assigned to the hs.image object.
+/// Get or set the name of the image represented by the hs.image object.
 ///
 /// Parameters:
-///  * None
+///  * `name` - an optional string specifying the new name for the hs.image object.
 ///
 /// Returns:
-///  * Name - the name assigned to the hs.image object.
+///  * if no argument is provided, returns the current name.  If a new name is specified, returns the hs.image object or nil if the name cannot be changed.
+///
+/// Notes:
+///  * see also [hs.image:setName](#setName) for a variant that returns a boolean instead.
 static int getImageName(lua_State* L) {
-    NSImage *testImage = [[LuaSkin shared] luaObjectAtIndex:1 toClass:"NSImage"] ;
-    lua_pushstring(L, [[testImage name] UTF8String]) ;
-    return 1 ;
-}
-
-/// hs.image:setName(Name) -> boolean
-/// Method
-/// Assigns the name assigned to the hs.image object.
-///
-/// Parameters:
-///  * Name - the name to assign to the hs.image object.
-///
-/// Returns:
-///  * Status - a boolean value indicating success (true) or failure (false) when assigning the specified name.
-static int setImageName(lua_State* L) {
-    NSImage *testImage = [[LuaSkin shared] luaObjectAtIndex:1 toClass:"NSImage"] ;
-    if (lua_isnil(L,2))
-        lua_pushboolean(L, [testImage setName:nil]) ;
-    else
-        lua_pushboolean(L, [testImage setName:[NSString stringWithUTF8String:luaL_checkstring(L, 2)]]) ;
-    return 1 ;
-}
-
-/// hs.image:size() -> size
-/// Method
-/// Returns the size of the image.
-///
-/// Parameters:
-///  * None
-///
-/// Returns:
-///  * size - a table representing the image size
-static int getImageSize(__unused lua_State* L) {
     LuaSkin *skin = [LuaSkin shared] ;
-    NSImage *testImage = [skin luaObjectAtIndex:1 toClass:"NSImage"] ;
-    [skin pushNSSize:[testImage size]] ;
-    return 1 ;
-}
-
-/// hs.image:setSize(size [, absolute]) -> object
-/// Method
-/// Returns a copy of the image resized to the height and width specified in the size table.
-///
-/// Parameters:
-///  * size     - a table with 'h' and 'w' keys specifying the size for the new image.
-///  * absolute - an optional boolean specifying whether or not the copied image should be resized to the height and width specified (true), or whether the copied image should be scaled proportionally to fit within the height and width specified (false).  Defaults to false.
-///
-/// Returns:
-///  * a copy of the image object at the new size
-static int setImageSize(lua_State* L) {
-    LuaSkin *skin = [LuaSkin shared] ;
-    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TTABLE, LS_TBOOLEAN | LS_TOPTIONAL, LS_TBREAK] ;
-    NSImage *theImage = [[skin luaObjectAtIndex:1 toClass:"NSImage"] copy] ;
-    NSSize  destSize  = [skin tableToSizeAtIndex:2] ;
-    BOOL    absolute  = (lua_gettop(L) == 3) ? (BOOL)lua_toboolean(L, 3) : NO ;
-    if (absolute) {
-        [theImage setSize:destSize] ;
+    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TANY | LS_TOPTIONAL, LS_TBREAK] ;
+    NSImage *testImage = [[LuaSkin shared] luaObjectAtIndex:1 toClass:"NSImage"] ;
+    if (lua_gettop(L) == 1) {
+        lua_pushstring(L, [[testImage name] UTF8String]) ;
     } else {
-        NSSize srcSize = [theImage size] ;
-        CGFloat multiplier = fmin(destSize.width / srcSize.width, destSize.height / srcSize.height) ;
-        [theImage setSize:NSMakeSize(srcSize.width * multiplier, srcSize.height * multiplier)] ;
+        if ([testImage setName:[NSString stringWithUTF8String:luaL_checkstring(L, 2)]]) {
+            lua_pushvalue(L, 1) ;
+        } else {
+            lua_pushnil(L) ;
+        }
     }
-    [skin pushNSObject:theImage];
     return 1 ;
 }
 
-/// hs.image:saveToFile(filename[, filetype]) -> boolean
+/// hs.image:size([size, [absolute]] ) -> imageObject | size
+/// Method
+/// Get or set the size of the image represented byt he hs.image object.
+///
+/// Parameters:
+///  * `size`     - an optional table with 'h' and 'w' keys specifying the size for the image.
+///  * `absolute` - when specifying a new size, an optional boolean, default false, specifying whether or not the image should be resized to the height and width specified (true), or whether the copied image should be scaled proportionally to fit within the height and width specified (false).
+///
+/// Returns:
+///  * If arguments are provided, return the hs.image object; otherwise returns the current size
+///
+/// Notes:
+///  * See also [hs.image:setSize](#setSize) for creating a copy of the image at a new size.
+static int getImageSize(lua_State* L) {
+    LuaSkin *skin = [LuaSkin shared] ;
+    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TBREAK | LS_TVARARG] ;
+    NSImage *theImage = [skin luaObjectAtIndex:1 toClass:"NSImage"] ;
+    if (lua_gettop(L) == 1) {
+        [skin pushNSSize:[theImage size]] ;
+    } else {
+        [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TTABLE, LS_TBOOLEAN | LS_TOPTIONAL, LS_TBREAK] ;
+        NSSize  destSize  = [skin tableToSizeAtIndex:2] ;
+        BOOL    absolute  = (lua_gettop(L) == 3) ? (BOOL)lua_toboolean(L, 3) : NO ;
+        if (absolute) {
+            [theImage setSize:destSize] ;
+        } else {
+            NSSize srcSize = [theImage size] ;
+            CGFloat multiplier = fmin(destSize.width / srcSize.width, destSize.height / srcSize.height) ;
+            [theImage setSize:NSMakeSize(srcSize.width * multiplier, srcSize.height * multiplier)] ;
+        }
+        [skin pushNSObject:theImage];
+    }
+    return 1 ;
+}
+
+/// hs.image:croppedCopy(rectangle) -> object
+/// Method
+/// Returns a copy of the portion of the image specified by the rectangle specified.
+///
+/// Parameters:
+///  * rectangle - a table with 'x', 'y', 'h', and 'w' keys specifying the portion of the image to return in the new image.
+///
+/// Returns:
+///  * a copy of the portion of the image specified
+static int croppedCopy(__unused lua_State* L) {
+    LuaSkin *skin = [LuaSkin shared] ;
+    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TTABLE, LS_TBREAK] ;
+    NSImage *theImage = [skin luaObjectAtIndex:1 toClass:"NSImage"] ;
+    NSRect  frame  = [skin tableToRectAtIndex:2] ;
+
+    // size changes may not actually affect representations until the image is composited, so...
+    // http://stackoverflow.com/a/36451307
+    NSRect targetRect = NSMakeRect(0.0, 0.0, theImage.size.width, theImage.size.height);
+    NSImage *newImage = [[NSImage alloc] initWithSize:targetRect.size];
+    [newImage lockFocus];
+    [theImage drawInRect:targetRect fromRect:targetRect operation:NSCompositeCopy fraction:1.0];
+    [newImage unlockFocus];
+
+// http://stackoverflow.com/questions/35643020/nsimage-drawinrect-and-nsview-cachedisplayinrect-memory-retained
+    const void *keys[]   = { kCGImageSourceShouldCache } ;
+    const void *values[] = { kCFBooleanFalse } ;
+    CFDictionaryRef options = CFDictionaryCreate(NULL, keys, values, 1, NULL, NULL);
+    CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)[newImage TIFFRepresentation], options);
+    CGImageRef maskRef = CGImageSourceCreateImageAtIndex(source, 0, NULL);
+    // correct for retina displays
+    NSSize actualSize = NSMakeSize(CGImageGetWidth(maskRef), CGImageGetHeight(maskRef)) ;
+    CGFloat xFactor = actualSize.width / newImage.size.width ;
+    CGFloat yFactor = actualSize.height / newImage.size.height ;
+    NSRect correctedFrame = NSMakeRect(
+        frame.origin.x * xFactor,
+        frame.origin.y * yFactor,
+        frame.size.width * xFactor,
+        frame.size.height * yFactor
+    ) ;
+    CGImageRef imageRef = CGImageCreateWithImageInRect(maskRef, correctedFrame);
+    NSImage *cropped = [[NSImage alloc] initWithCGImage:imageRef size:frame.size];
+    CGImageRelease(maskRef);
+    CGImageRelease(imageRef);
+    CFRelease(source);
+    CFRelease(options) ;
+
+    [skin pushNSObject:cropped] ;
+    return 1 ;
+}
+
+/// hs.image:encodeAsURLString([scale], [type]) -> string
+/// Method
+/// Returns a bitmap representation of the image as a base64 encoded URL string
+///
+/// Parameters:
+///  * scale - an optional boolean, default false, which indicates that the image size (which macOS represents as points) should be scaled to pixels.  For images that have Retina scale representations, this may result in an encoded image which is scaled down from the original source.
+///  * type  - optional case-insensitive string paramater specifying the bitmap image type for the encoded string (default PNG)
+///    * PNG  - save in Portable Network Graphics (PNG) format
+///    * TIFF - save in Tagged Image File Format (TIFF) format
+///    * BMP  - save in Windows bitmap image (BMP) format
+///    * GIF  - save in Graphics Image Format (GIF) format
+///    * JPEG - save in Joint Photographic Experts Group (JPEG) format
+///
+/// Returns:
+///  * the bitmap image representation as a Base64 encoded string
+///
+/// Notes:
+///  * You can convert the string back into an image object with [hs.image.imageFromURL](#URL), e.g. `hs.image.imageFromURL(string)`
+static int encodeAsString(lua_State* L) {
+    LuaSkin *skin = [LuaSkin shared];
+    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TBREAK | LS_TVARARG] ;
+    NSImage*  theImage = [skin luaObjectAtIndex:1 toClass:"NSImage"] ;
+
+    BOOL     scaleToPixels = lua_isboolean(L, 2) ? (BOOL)lua_toboolean(L, 2) : NO ;
+    NSString *typeLabel    = @"png" ;
+    if (lua_gettop(L) == 2) {
+        [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TBOOLEAN | LS_TSTRING, LS_TBREAK] ;
+        if (lua_type(L, 2) == LUA_TSTRING) {
+            typeLabel = [skin toNSObjectAtIndex:2] ;
+        }
+    } else if (lua_gettop(L) > 2) {
+        [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TBOOLEAN, LS_TSTRING, LS_TBREAK] ;
+        typeLabel = [skin toNSObjectAtIndex:3] ;
+    } // else it's 1 and we no longer need to check
+
+    NSBitmapImageFileType fileType = NSPNGFileType ;
+
+    if      ([typeLabel compare:@"PNG"  options:NSCaseInsensitiveSearch] == NSOrderedSame) { fileType = NSPNGFileType  ; }
+    else if ([typeLabel compare:@"TIFF" options:NSCaseInsensitiveSearch] == NSOrderedSame) { fileType = NSTIFFFileType ; }
+    else if ([typeLabel compare:@"BMP"  options:NSCaseInsensitiveSearch] == NSOrderedSame) { fileType = NSBMPFileType  ; }
+    else if ([typeLabel compare:@"GIF"  options:NSCaseInsensitiveSearch] == NSOrderedSame) { fileType = NSGIFFileType  ; }
+    else if ([typeLabel compare:@"JPEG" options:NSCaseInsensitiveSearch] == NSOrderedSame) { fileType = NSJPEGFileType ; }
+    else if ([typeLabel compare:@"JPG"  options:NSCaseInsensitiveSearch] == NSOrderedSame) { fileType = NSJPEGFileType ; }
+    else {
+        return luaL_error(L, "invalid image type specified") ;
+    }
+
+    // size changes may not actually affect representations until the image is composited, so...
+    // http://stackoverflow.com/a/36451307,
+    NSRect targetRect = NSMakeRect(0.0, 0.0, theImage.size.width, theImage.size.height);
+    NSImage *newImage = [[NSImage alloc] initWithSize:targetRect.size];
+    [newImage lockFocus];
+    [theImage drawInRect:targetRect fromRect:targetRect operation:NSCompositeCopy fraction:1.0];
+    [newImage unlockFocus];
+
+    NSBitmapImageRep *rep ;
+    if (scaleToPixels) {
+        // https://gist.github.com/mattstevens/4400775
+        rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
+                                                      pixelsWide:targetRect.size.width
+                                                      pixelsHigh:targetRect.size.height
+                                                   bitsPerSample:8
+                                                 samplesPerPixel:4
+                                                        hasAlpha:YES
+                                                        isPlanar:NO
+                                                  colorSpaceName:NSCalibratedRGBColorSpace
+                                                     bytesPerRow:0
+                                                    bitsPerPixel:0];
+        [rep setSize:targetRect.size];
+
+        [NSGraphicsContext saveGraphicsState];
+        [NSGraphicsContext setCurrentContext:[NSGraphicsContext graphicsContextWithBitmapImageRep:rep]];
+        [newImage drawInRect:targetRect fromRect:NSZeroRect operation:NSCompositeCopy fraction:1.0];
+        [NSGraphicsContext restoreGraphicsState];
+    } else {
+        NSData *tiffRep = [newImage TIFFRepresentation];
+        if (!tiffRep)  return luaL_error(L, "Unable to write image file: Can't create internal representation");
+
+        rep = [NSBitmapImageRep imageRepWithData:tiffRep];
+        if (!rep)  return luaL_error(L, "Unable to write image file: Can't wrap internal representation");
+    }
+
+    NSData* fileData = [rep representationUsingType:fileType properties:@{}];
+    if (!fileData) return luaL_error(L, "Unable to write image file: Can't convert internal representation");
+
+    NSString *result = [fileData base64EncodedStringWithOptions:NSDataBase64EncodingEndLineWithLineFeed] ;
+    [skin pushNSObject:[NSString stringWithFormat:@"data:image/%@;base64,%@", typeLabel.lowercaseString, result]] ;
+    return 1 ;
+}
+
+/// hs.image:saveToFile(filename, [scale], [filetype]) -> boolean
 /// Method
 /// Save the hs.image object as an image of type `filetype` to the specified filename.
 ///
 /// Parameters:
 ///  * filename - the path and name of the file to save.
+///  * scale    - an optional boolean, default false, which indicates that the image size (which macOS represents as points) should be scaled to pixels.  For images that have Retina scale representations, this may result in a saved image which is scaled down from the original source.
 ///  * filetype - optional case-insensitive string paramater specifying the file type to save (default PNG)
 ///    * PNG  - save in Portable Network Graphics (PNG) format
 ///    * TIFF - save in Tagged Image File Format (TIFF) format
@@ -1052,34 +1430,74 @@ static int setImageSize(lua_State* L) {
 ///  * Status - a boolean value indicating success (true) or failure (false)
 ///
 /// Notes:
-///  * Saves image at its original size.
+///  * Saves image at the size in points (or pixels, if `scale` is true) as reported by [hs.image:size()](#size) for the image object
 static int saveToFile(lua_State* L) {
     LuaSkin *skin = [LuaSkin shared];
-    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TSTRING, LS_TSTRING | LS_TOPTIONAL, LS_TBREAK];
+    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TSTRING, LS_TBREAK | LS_TVARARG] ;
+
     NSImage*  theImage = [skin luaObjectAtIndex:1 toClass:"NSImage"] ;
     NSString* filePath = [skin toNSObjectAtIndex:2] ;
+
+    BOOL     scaleToPixels = lua_isboolean(L, 3) ? (BOOL)lua_toboolean(L, 3) : NO ;
+    NSString *typeLabel    = @"png" ;
+    if (lua_gettop(L) == 3) {
+        [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TSTRING, LS_TBOOLEAN | LS_TSTRING, LS_TBREAK] ;
+        if (lua_type(L, 3) == LUA_TSTRING) {
+            typeLabel = [skin toNSObjectAtIndex:3] ;
+        }
+    } else if (lua_gettop(L) > 3) {
+        [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TSTRING, LS_TBOOLEAN, LS_TSTRING, LS_TBREAK] ;
+        typeLabel = [skin toNSObjectAtIndex:4] ;
+    } // else it's 2 and we no longer need to check
+
     NSBitmapImageFileType fileType = NSPNGFileType ;
 
-    if (lua_isstring(L, 3)) {
-        NSString* typeLabel = [skin toNSObjectAtIndex:3] ;
-        if      ([typeLabel compare:@"PNG"  options:NSCaseInsensitiveSearch] == NSOrderedSame) { fileType = NSPNGFileType  ; }
-        else if ([typeLabel compare:@"TIFF" options:NSCaseInsensitiveSearch] == NSOrderedSame) { fileType = NSTIFFFileType ; }
-        else if ([typeLabel compare:@"BMP"  options:NSCaseInsensitiveSearch] == NSOrderedSame) { fileType = NSBMPFileType  ; }
-        else if ([typeLabel compare:@"GIF"  options:NSCaseInsensitiveSearch] == NSOrderedSame) { fileType = NSGIFFileType  ; }
-        else if ([typeLabel compare:@"JPEG" options:NSCaseInsensitiveSearch] == NSOrderedSame) { fileType = NSJPEGFileType ; }
-        else if ([typeLabel compare:@"JPG"  options:NSCaseInsensitiveSearch] == NSOrderedSame) { fileType = NSJPEGFileType ; }
-        else {
-            return luaL_error(L, "hs.image:saveToFile:: invalid file type specified") ;
-        }
+    if      ([typeLabel compare:@"PNG"  options:NSCaseInsensitiveSearch] == NSOrderedSame) { fileType = NSPNGFileType  ; }
+    else if ([typeLabel compare:@"TIFF" options:NSCaseInsensitiveSearch] == NSOrderedSame) { fileType = NSTIFFFileType ; }
+    else if ([typeLabel compare:@"BMP"  options:NSCaseInsensitiveSearch] == NSOrderedSame) { fileType = NSBMPFileType  ; }
+    else if ([typeLabel compare:@"GIF"  options:NSCaseInsensitiveSearch] == NSOrderedSame) { fileType = NSGIFFileType  ; }
+    else if ([typeLabel compare:@"JPEG" options:NSCaseInsensitiveSearch] == NSOrderedSame) { fileType = NSJPEGFileType ; }
+    else if ([typeLabel compare:@"JPG"  options:NSCaseInsensitiveSearch] == NSOrderedSame) { fileType = NSJPEGFileType ; }
+    else {
+        return luaL_error(L, "hs.image:saveToFile:: invalid file type specified") ;
     }
 
     BOOL result = false;
 
-    NSData *tiffRep = [theImage TIFFRepresentation];
-    if (!tiffRep)  return luaL_error(L, "Unable to write image file: Can't create internal representation");
+    // size changes may not actually affect representations until the image is composited, so...
+    // http://stackoverflow.com/a/36451307
+    NSRect targetRect = NSMakeRect(0.0, 0.0, theImage.size.width, theImage.size.height);
+    NSImage *newImage = [[NSImage alloc] initWithSize:targetRect.size];
+    [newImage lockFocus];
+    [theImage drawInRect:targetRect fromRect:targetRect operation:NSCompositeCopy fraction:1.0];
+    [newImage unlockFocus];
 
-    NSBitmapImageRep *rep = [NSBitmapImageRep imageRepWithData:tiffRep];
-    if (!rep)  return luaL_error(L, "Unable to write image file: Can't wrap internal representation");
+    NSBitmapImageRep *rep ;
+    if (scaleToPixels) {
+        // https://gist.github.com/mattstevens/4400775
+        rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
+                                                      pixelsWide:targetRect.size.width
+                                                      pixelsHigh:targetRect.size.height
+                                                   bitsPerSample:8
+                                                 samplesPerPixel:4
+                                                        hasAlpha:YES
+                                                        isPlanar:NO
+                                                  colorSpaceName:NSCalibratedRGBColorSpace
+                                                     bytesPerRow:0
+                                                    bitsPerPixel:0];
+        [rep setSize:targetRect.size];
+
+        [NSGraphicsContext saveGraphicsState];
+        [NSGraphicsContext setCurrentContext:[NSGraphicsContext graphicsContextWithBitmapImageRep:rep]];
+        [newImage drawInRect:targetRect fromRect:NSZeroRect operation:NSCompositeCopy fraction:1.0];
+        [NSGraphicsContext restoreGraphicsState];
+    } else {
+        NSData *tiffRep = [newImage TIFFRepresentation];
+        if (!tiffRep)  return luaL_error(L, "Unable to write image file: Can't create internal representation");
+
+        rep = [NSBitmapImageRep imageRepWithData:tiffRep];
+        if (!rep)  return luaL_error(L, "Unable to write image file: Can't wrap internal representation");
+    }
 
     NSData* fileData = [rep representationUsingType:fileType properties:@{}];
     if (!fileData) return luaL_error(L, "Unable to write image file: Can't convert internal representation");
@@ -1091,6 +1509,49 @@ static int saveToFile(lua_State* L) {
         return luaL_error(L, "Unable to write image file: %s", [[error localizedDescription] UTF8String]);
 
     lua_pushboolean(L, result) ;
+    return 1 ;
+}
+
+/// hs.image:template([state]) -> imageObject | boolean
+/// Method
+/// Get or set whether the image is considered a template image.
+///
+/// Parameters:
+///  * `state` - an optional boolean specifying whether or not the image should be a template.
+///
+/// Returns:
+///  * if a parameter is provided, returns the hs.image object; otherwise returns the current value
+///
+/// Notes:
+///  * Template images consist of black and clear colors (and an alpha channel). Template images are not intended to be used as standalone images and are usually mixed with other content to create the desired final appearance.
+///  * Images with this flag set to true usually appear lighter than they would with this flag set to false.
+static int imageTemplate(lua_State *L) {
+    LuaSkin *skin = [LuaSkin shared] ;
+    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TBOOLEAN | LS_TOPTIONAL, LS_TBREAK] ;
+    NSImage *theImage = [skin luaObjectAtIndex:1 toClass:"NSImage"] ;
+    if (lua_gettop(L) == 1) {
+        lua_pushboolean(L, theImage.template) ;
+    } else {
+        theImage.template = (BOOL)lua_toboolean(L, 2) ;
+        lua_pushvalue(L, 1) ;
+    }
+    return 1 ;
+}
+
+/// hs.image:copy() -> imageObject
+/// Method
+/// Returns a copy of the image
+///
+/// Parameters:
+///  * None
+///
+/// Returns:
+///  * a new hs.image object
+static int copyImage(__unused lua_State *L) {
+    LuaSkin *skin = [LuaSkin shared] ;
+    [skin checkArgs:LS_TUSERDATA, USERDATA_TAG, LS_TBREAK] ;
+    NSImage *theImage = [skin luaObjectAtIndex:1 toClass:"NSImage"] ;
+    [skin pushNSObject:[theImage copy]] ;
     return 1 ;
 }
 
@@ -1156,15 +1617,18 @@ static int userdata_gc(lua_State* L) {
 
 // Metatable for userdata objects
 static const luaL_Reg userdata_metaLib[] = {
-    {"name",       getImageName},
-    {"size",       getImageSize},
-    {"setSize",    setImageSize},
-    {"setName",    setImageName},
-    {"saveToFile", saveToFile},
-    {"__tostring", userdata_tostring},
-    {"__eq",       userdata_eq},
-    {"__gc",       userdata_gc},
-    {NULL,         NULL}
+    {"name",              getImageName},
+    {"size",              getImageSize},
+    {"template",          imageTemplate},
+    {"copy",              copyImage},
+    {"croppedCopy",       croppedCopy},
+    {"saveToFile",        saveToFile},
+    {"encodeAsURLString", encodeAsString},
+
+    {"__tostring",        userdata_tostring},
+    {"__eq",              userdata_eq},
+    {"__gc",              userdata_gc},
+    {NULL,                NULL}
 };
 
 // Functions for returned object when module loads
@@ -1200,6 +1664,8 @@ int luaopen_hs_image_internal(lua_State* L) {
 
     [skin registerPushNSHelper:NSImage_tolua        forClass:"NSImage"] ;
     [skin registerLuaObjectHelper:HSImage_toNSImage forClass:"NSImage" withUserdataMapping:USERDATA_TAG] ;
+
+    if (!missingIconForFile) missingIconForFile = [[NSWorkspace sharedWorkspace] iconForFile:@""] ; // see comment at top
     return 1;
 }
 

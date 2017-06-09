@@ -141,6 +141,21 @@ NSString *specMaskToString(int spec) {
     NSAssert((self.L == NULL), @"createLuaState called on a live Lua environment", nil);
     self.L = luaL_newstate();
     luaL_openlibs(self.L);
+
+    NSString *luaSkinLua = [[NSBundle bundleForClass:[self class]] pathForResource:@"luaskin" ofType:@"lua"];
+    NSAssert((luaSkinLua != nil), @"createLuaState was unable to find luaskin.lua. Your installation may be damaged");
+
+    int loadresult = luaL_loadfile(self.L, luaSkinLua.fileSystemRepresentation);
+    if (loadresult != 0) {
+        NSLog(@"createLuaState was unable to load luaskin.lua. Your installation may be damaged.");
+        exit(1);
+    }
+
+    int luaresult = lua_pcall(self.L, 0, 0, 0);
+    if (luaresult != LUA_OK) {
+        NSLog(@"createLuaState was unable to evaluate luaskin.lua. Your installation may be damaged.");
+        exit(1);
+    }
 }
 
 - (void)destroyLuaState {
@@ -298,7 +313,7 @@ NSString *specMaskToString(int spec) {
 
 - (int)pushLuaRef:(int)refTable ref:(int)ref {
     NSAssert((refTable != LUA_NOREF && refTable != LUA_REFNIL), @"ERROR: LuaSkin::pushLuaRef was passed a NOREF/REFNIL refTable", nil);
-    NSAssert((ref != LUA_NOREF && ref != LUA_REFNIL), @"ERROR: LuaSkin::luaRef was passed a NOREF/REFNIL ref", nil);
+    NSAssert((ref != LUA_NOREF && ref != LUA_REFNIL), @"ERROR: LuaSkin::pushLuaRef was passed a NOREF/REFNIL ref", nil);
 
     // Push refTable onto the stack
     lua_rawgeti(self.L, LUA_REGISTRYINDEX, refTable);
@@ -376,7 +391,10 @@ NSString *specMaskToString(int spec) {
                 if (spec & LS_TTYPEDTABLE) {
                     lsType = LS_TTYPEDTABLE;
                     char *expectedTableTag = va_arg(args, char*);
-                    if (!expectedTableTag) luaL_error(self.L, "ERROR: unable to get expected LuaSkin table type for argument %d", idx) ;
+                    if (!expectedTableTag) {
+                        luaL_error(self.L, "ERROR: unable to get expected LuaSkin table type for argument %d", idx) ;
+                        return; // This is useless since luaL_error() never returns, but this makes clang's analyser happier
+                    }
 
                     const char *actualTableTag   = NULL ;
                     if (lua_getfield(self.L, idx, "__luaSkinType") == LUA_TSTRING) {
@@ -385,6 +403,15 @@ NSString *specMaskToString(int spec) {
                     lua_pop(self.L, 1) ;
                     if (!actualTableTag || !(strcmp(actualTableTag, expectedTableTag) == 0)) {
                         luaL_error(self.L, "ERROR: incorrect LuaSkin typed table for argument %d (expected %s)", idx, expectedTableTag) ;
+                    }
+                } else if (spec & LS_TFUNCTION) {
+                // they want a function, so let's see if this table can mimic a function
+                    if (luaL_getmetafield(self.L, idx, "__call") != LUA_TNIL) {
+                        lua_pop(self.L, 1) ;
+                        lsType = LS_TFUNCTION ;
+                    } else {
+                // no, so allow normal error handling to catch this
+                        lsType = LS_TTABLE ;
                     }
                 } else {
                     lsType = LS_TTABLE;
@@ -423,6 +450,17 @@ nextarg:
             luaL_error(self.L, "ERROR: incorrect number of arguments. Expected %d, got %d", idx, numArgs);
         }
     }
+}
+
+- (int)luaTypeAtIndex:(int)idx {
+    int foundType = lua_type(self.L, idx) ;
+    if (foundType == LUA_TTABLE) {
+        if (luaL_getmetafield(self.L, idx, "__call") != LUA_TNIL) {
+            lua_pop(self.L, 1) ;
+            foundType = LUA_TFUNCTION ;
+        }
+    }
+    return foundType ;
 }
 
 #pragma mark - Conversion from NSObjects into Lua objects
